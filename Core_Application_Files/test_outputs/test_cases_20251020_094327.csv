@@ -1,0 +1,43 @@
+Test ID,Test Type,Test Name,Description,Target Function/Class,Source File,Test Code,Priority,Status,Created Date
+TC0001,Functional Test,functional_test_1,Generated Functional Test,general,N/A,"[
+  {
+    'test_name': 'Search_bugs_happy_path',
+    'preconditions': [
+      {'func': 'search_bugs', 'args': ['Hello World', TOP_K]}
+    ],
+    'expected_result': [
+      {'summary': 'Bug Report 1', 'description': 'Description 1'},
+      {'summary': 'Bug Report 2', 'description': 'Description 2'}
+    ]
+  },
+  {
+    'test_name': 'Search_bugs_keyword_match',
+    'preconditions': [
+      {'func': 'search_bugs', 'args': ['crash', TOP_K, True]}
+    ],
+    'expected_result': [
+      {'summary': 'Bug Report 1 (Crash)', 'description': 'Description 1'}
+    ]
+  },
+  {
+    'test_name': 'Search_bugs_no_results',
+    'preconditions': [
+      {'func': 'search_bugs', 'args': ['No results expected', TOP_K]}
+    ],
+    'expected_result': []
+  },
+  {
+    'test_name': 'Suggest_severity_priority_happy_path',
+    'preconditions': [
+      {'func': 'suggest_severity_priority', 'args': [{'summary': 'Bug Report 1', 'description': 'Description 1'}]}
+    ],
+    'expected_result': {'severity': 'MEDIUM', 'priority': 'HIGH'}
+  },
+  {
+    'test_name': 'Suggest_severity_priority_error_scenario',
+    'preconditions': [
+      {'func': 'suggest_severity_priority', 'args': [{'summary': 'Invalid bug report'}]}
+    ],
+    'expected_result': None
+  }
+]",Medium,Not Executed,2025-10-20 09:43:27

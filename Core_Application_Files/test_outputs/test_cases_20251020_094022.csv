@@ -1,0 +1,5 @@
+Test ID,Test Type,Test Name,Description,Target Function/Class,Source File,Test Code,Priority,Status,Created Date
+TC0001,Functional Test,functional_test_1,Generated Functional Test,general,N/A,**Test 2: Delete Lines Before Timestamp**,Medium,Not Executed,2025-10-20 09:40:22
+TC0002,Functional Test,functional_test_2,Generated Functional Test,general,N/A,**Test 3: Plot Server Graph**,Medium,Not Executed,2025-10-20 09:40:22
+TC0003,Functional Test,functional_test_3,Generated Functional Test,general,N/A,**Test 4: Create Detailed View**,Medium,Not Executed,2025-10-20 09:40:22
+TC0004,Functional Test,functional_test_4,Generated Functional Test,general,N/A,**Test 5: Integration Test (Extract Gzip to CSV and Plot Server Graph)**,Medium,Not Executed,2025-10-20 09:40:22

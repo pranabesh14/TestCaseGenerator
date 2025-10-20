@@ -1,0 +1,2 @@
+Test ID,Test Type,Test Name,Description,Target Function/Class,Source File,Test Code,Priority,Status,Created Date
+TC0001,Functional Test,functional_test_generated,Generated test case,general,N/A,"Error communicating with LLM: HTTPConnectionPool(host='localhost', port=11434): Read timed out. (read timeout=60)",Medium,Not Executed,2025-10-20 09:02:10
