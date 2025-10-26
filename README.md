@@ -96,26 +96,6 @@ Export in multiple formats
 bashpython cli.py generate file.py --output all
 ```
 
-## Project Structure
-```
-test-case-generator/
-├── app.py                  # Streamlit web application
-├── cli.py                  # Command-line interface
-├── config.py               # Configuration management
-├── llm_handler.py          # LLM API interaction
-├── code_parser.py          # Code parsing and analysis
-├── code_chunker.py         # Intelligent code chunking
-├── test_generator.py       # Test case generation logic
-├── rag_system.py           # RAG context retrieval
-├── git_handler.py          # Git repository operations
-├── csv_handler.py          # Export and formatting
-├── security.py             # Security and validation
-├── logger.py               # Logging utilities
-├── logs/                   # Application logs
-├── test_outputs/           # Generated test files
-├── rag_storage/            # RAG system data
-├── chat_history/           # Chat conversation history
-└── temp_repos/             # Temporary Git clones
 ```
 
 ## Configuration
