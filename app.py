@@ -276,7 +276,7 @@ def generate_tests(test_types):
         progress_bar.progress(0.3)
         
         # Generate tests
-        status_text.text("⚡ Generating tests with Gemini AI...")
+        status_text.text("⚡ Generating tests with AI...")
         generator = TestGenerator(
             st.session_state.llm_handler,
             st.session_state.rag_system
@@ -611,7 +611,7 @@ def main():
     if not config.validate_config():
         st.error("⚠️ Configuration Error")
         st.error("Please set GEMINI_API_KEY in .env file")
-        st.info("1. Copy .env.example to .env\n2. Add your Gemini API key\n3. Restart the application")
+        st.info("1. Copy .env.example to .env\n2. Add your LLM API key\n3. Restart the application")
         st.stop()
     
     # Sidebar
@@ -651,7 +651,7 @@ def main():
     
     # Footer
     st.divider()
-    st.caption("🤖 Powered by Google Gemini AI | 📝 Made with Streamlit")
+    st.caption("🤖 Powered by AI | 📝 Made with Streamlit")
 
 if __name__ == "__main__":
     main()
