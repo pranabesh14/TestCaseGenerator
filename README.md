@@ -1,341 +1,212 @@
-# AI-Powered Test Case Generator
+An intelligent test case generation system that automatically creates comprehensive test suites for your code using AI/LLM technology. Supports multiple programming languages and generates Unit Tests, Regression Tests, and Functional Tests in professional formats.
+Features
+🎯 Core Capabilities
 
-A comprehensive RAG-based chatbot system for automated test case generation using Llama3 and Streamlit.
+Multi-Language Support: Python, JavaScript, TypeScript, Java, C++, Go, Ruby, PHP, and more
+Multiple Test Types:
 
-## Features
+Unit Tests (function-level testing)
+Regression Tests (change detection and backward compatibility)
+Functional Tests (end-to-end behavior validation)
 
-✅ **Multi-Language Support**: Parse and analyze code in Python, JavaScript, Java, C++, Go, and more  
-✅ **Three Test Types**: Generate Unit Tests, Regression Tests, and Functional Tests  
-✅ **Code Change Detection**: Automatically detect changes when files are re-uploaded  
-✅ **Git Integration**: Clone and analyze entire repositories  
-✅ **RAG System**: Context-aware test generation using Retrieval-Augmented Generation  
-✅ **CSV Export**: Export test cases with categorization and priority  
-✅ **Chat History**: Persistent chat history saved to sidebar  
-✅ **Security Hardened**: Input sanitization and LLM boundaries to prevent misuse  
-✅ **Module-Level Testing**: Generate tests for entire modules/projects  
 
-## Architecture
+Professional Test Formats: Industry-standard test case documentation with Test IDs, Steps, and Expected Results
+Code-Based Tests: Ready-to-run test functions with assertions
 
-```
-├── app.py                 # Main Streamlit application
-├── llm_handler.py         # LLM integration with Llama3
-├── code_parser.py         # Multi-language code parsing
-├── test_generator.py      # Test case generation logic
-├── git_handler.py         # Git repository operations
-├── csv_handler.py         # CSV export functionality
-├── rag_system.py          # RAG implementation
-├── security.py            # Security and input sanitization
-└── requirements.txt       # Python dependencies
-```
+🚀 Input Methods
 
-## Prerequisites
+File Upload: Upload individual code files through web interface
+Git Repository: Clone and analyze entire repositories
+Interactive Chat: Ask questions and get guidance on test generation
 
-1. **Python 3.8+**
-2. **Ollama** (for running Llama3 locally)
-3. **Git** (for repository cloning)
+🧠 Intelligent Features
 
-## Installation
+RAG System: Context-aware test generation using Retrieval Augmented Generation
+Code Chunking: Intelligent code splitting for optimal LLM processing
+Change Detection: Identifies code modifications for targeted regression testing
+Security Validation: Input sanitization and malicious pattern detection
 
-### Step 1: Install Ollama and Llama3
+📊 Export Options
 
-```bash
-# Install Ollama (macOS/Linux)
-curl -fsSL https://ollama.com/install.sh | sh
+CSV format for spreadsheet integration
+Professional test reports (TXT format)
+JSON format for programmatic access
+Multiple format export in one go
 
-# Or for Windows, download from: https://ollama.com/download
+Installation
+Prerequisites
 
-# Pull Llama3 model
-ollama pull llama3
-```
+Python 3.8 or higher
+Git (for repository cloning features)
+LLM API endpoint (local or remote)
 
-### Step 2: Install Python Dependencies
+Setup
 
-```bash
-# Clone this repository
-git clone <your-repo-url>
+Clone the repository
+
+bashgit clone <repository-url>
 cd test-case-generator
 
-# Create virtual environment
-python -m venv venv
+Install dependencies
 
-# Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
+bashpip install -r requirements.txt
 
-# Install dependencies
-pip install -r requirements.txt
-```
+Configure environment variables
+Create a .env file in the root directory:
 
-### Step 3: Configure Environment
-
-Create a `.env` file in the root directory:
-
-```env
-# LLM Configuration
+env# LLM Configuration
 LLM_API_ENDPOINT=http://localhost:11434/api/generate
-LLM_MODEL_NAME=llama3
+LLM_MODEL_NAME=your-model-name
+LLM_TEMPERATURE=0.7
+LLM_MAX_TOKENS=2000
 
-# Optional: Set custom ports
-STREAMLIT_SERVER_PORT=8501
+# Application Settings
+DEBUG=False
+LOG_LEVEL=INFO
+MAX_FILE_SIZE=1000000
+
+# Feature Flags
+ENABLE_GIT_INTEGRATION=True
+ENABLE_RAG_SYSTEM=True
+
+Create necessary directories
+
+bashpython -c "from config import config; config.create_directories()"
+Usage
+Web Interface (Streamlit)
+Start the web application:
+bashstreamlit run app.py
+The application will be available at http://localhost:8501
+Features:
+
+Upload code files via drag-and-drop
+Clone Git repositories by URL
+Interactive chat for test generation guidance
+Real-time test generation with progress tracking
+Download generated tests in multiple formats
+
+Command Line Interface
+Generate tests from local files
+bashpython cli.py generate file1.py file2.py --types unit regression functional --output csv
+Generate tests from Git repository
+bashpython cli.py generate-repo https://github.com/username/repo.git --branch main --types unit functional
+Analyze code structure
+bashpython cli.py analyze mycode.py
+Export in multiple formats
+bashpython cli.py generate file.py --output all
 ```
 
-## Usage
-
-### Start the Application
-
-```bash
-# Start Ollama service (if not running)
-ollama serve
-
-# In another terminal, start the Streamlit app
-streamlit run app.py
 ```
-
-The application will open in your browser at `http://localhost:8501`
-
-### Using the Application
-
-#### 1. Upload Files Tab
-
-1. Click "Upload Code Files"
-2. Select one or more code files
-3. Review detected changes (if re-uploading)
-4. Click "Generate Test Cases from Files"
-5. Download the CSV with all test cases
-
-#### 2. Git Repository Tab
-
-1. Enter Git repository URL (e.g., `https://github.com/user/repo.git`)
-2. Specify branch (default: main)
-3. Set clone depth
-4. Click "Clone and Generate Tests"
-5. Wait for analysis and download results
-
-#### 3. Chat Tab
-
-1. Ask questions about test generation
-2. Get recommendations for testing strategies
-3. Discuss specific test scenarios
-4. Chat history is automatically saved
-
-### Test Case Types
-
-**Unit Tests**: Test individual functions and methods
-- Focus on single units of code
-- Include assertions and edge cases
-- High priority
-
-**Regression Tests**: Ensure changes don't break functionality
-- Generated when code changes are detected
-- Test affected areas
-- Critical priority for changed code
-
-**Functional Tests**: End-to-end feature testing
-- Test complete workflows
-- Integration between components
-- Medium-High priority
-
-## Security Features
-
-### Input Sanitization
-- Removes malicious patterns (SQL injection, XSS, etc.)
-- Validates file sizes and formats
-- Sanitizes filenames
-
-### LLM Boundaries
-The system enforces strict boundaries on the LLM:
-- **Only** generates test-related content
-- Refuses non-testing queries
-- Cannot be used for general coding tasks
-- Blocks malicious requests
-
-### Rate Limiting
-- Prevents abuse through rate limiting
-- Logs security events
-- Validates Git URLs
 
 ## Configuration
 
-### Custom LLM Endpoint
+### LLM Settings
+Configure your LLM endpoint and model in the `.env` file or through environment variables:
+- `LLM_API_ENDPOINT`: API endpoint URL
+- `LLM_MODEL_NAME`: Model identifier
+- `LLM_TEMPERATURE`: Creativity level (0.0-1.0)
+- `LLM_MAX_TOKENS`: Maximum response length
 
-If using a different LLM service, modify `llm_handler.py`:
+### Test Generation Settings
+- `UNIT_TESTS_PER_FILE`: Number of unit tests per file (default: 5)
+- `REGRESSION_TESTS_PER_CHANGE`: Tests per code change (default: 3)
+- `FUNCTIONAL_TESTS_PER_MODULE`: Module-level tests (default: 5)
 
-```python
-# For OpenAI-compatible APIs
-self.api_endpoint = "https://your-api-endpoint.com/v1/chat/completions"
+### Security Settings
+- `MAX_INPUT_LENGTH`: Maximum input string length
+- `RATE_LIMIT_REQUESTS`: Request rate limit
+- `ENABLE_SECURITY_LOGGING`: Enable security event logging
 
-# For Anthropic Claude
-self.api_endpoint = "https://api.anthropic.com/v1/messages"
+## Test Format Examples
+
+### Professional Format (Functional Tests)
 ```
+Test Case ID: TC-FN-01
+Description: Validate user authentication flow
+Steps:
+  Step 1: Navigate to login page
+  Step 2: Enter valid credentials
+  Step 3: Click login button
+Expected Result: User successfully authenticated and redirected to dashboard
+Code Format (Unit/Regression Tests)
+pythondef test_calculate_total_valid_input():
+    """Test calculate_total with valid numeric inputs"""
+    result = calculate_total(10, 20, 30)
+    assert result == 60, "Sum should equal 60"
+Architecture
+Code Processing Pipeline
 
-### Adjust Test Generation
+Parsing: Extract functions, classes, imports from code
+Chunking: Split code into logical, processable chunks
+Context Retrieval: Use RAG to find relevant code context
+Test Generation: Generate tests using LLM for each chunk
+Formatting: Convert to professional or code format
+Export: Save to CSV, TXT, or JSON
 
-Modify parameters in `test_generator.py`:
+RAG System
+The RAG (Retrieval Augmented Generation) system maintains a knowledge base of:
 
-```python
-# Change number of tests generated
-def _generate_unit_tests(self, parsed_data: Dict) -> List[Dict]:
-    # Generate 3-5 tests instead of 5-10
-    # Modify prompt in llm_handler.py
-```
+Code structure and patterns
+Function and class definitions
+Previous versions for change detection
+Cross-file dependencies
 
-## Project Structure
+Security
+The application includes multiple security layers:
 
-```
-test-case-generator/
-├── app.py                      # Main application
-├── llm_handler.py              # LLM integration
-├── code_parser.py              # Code analysis
-├── test_generator.py           # Test generation
-├── git_handler.py              # Git operations
-├── csv_handler.py              # Export functionality
-├── rag_system.py               # RAG implementation
-├── security.py                 # Security layer
-├── requirements.txt            # Dependencies
-├── README.md                   # This file
-├── .env                        # Configuration
-├── chat_history/               # Saved chats
-├── rag_storage/                # RAG data
-├── test_outputs/               # Generated test files
-├── temp_repos/                 # Cloned repositories
-└── logs/                       # Security logs
-```
+Input Sanitization: Removes malicious patterns and control characters
+Query Validation: Ensures requests are test-related
+Code Validation: Checks for suspicious patterns in uploaded code
+Git URL Validation: Prevents access to private/local repositories
+Rate Limiting: Prevents abuse (placeholder for production implementation)
 
-## Troubleshooting
+Logging
+Comprehensive logging system with multiple log files:
 
-### Ollama Connection Issues
+logs/app.log: General application events
+logs/test_generation.log: Test generation metrics
+logs/errors.log: Error tracking
+logs/performance.log: Performance metrics
+logs/security_events.log: Security-related events
 
-```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
+Troubleshooting
+LLM Connection Issues
 
-# Restart Ollama
-ollama serve
-```
+Verify LLM_API_ENDPOINT is correct and accessible
+Check if LLM service is running
+Review timeout settings in configuration
 
-### Module Import Errors
+Git Clone Failures
 
-```bash
-# Ensure all dependencies are installed
-pip install -r requirements.txt --upgrade
-```
+Ensure Git is installed and in PATH
+Check repository URL format
+Verify network connectivity
+For private repos, authentication is not currently supported
 
-### Git Clone Failures
+Test Generation Issues
 
-- Check internet connection
-- Verify repository URL
-- Ensure Git is installed: `git --version`
-- Check repository permissions
+Check logs in logs/app.log for detailed errors
+Verify code files are in supported languages
+Ensure LLM has sufficient context window for large files
 
-### Large Files
+Contributing
+Contributions are welcome! Please:
 
-The system limits:
-- Individual files: 1MB
-- Total code per request: 5000 characters to LLM
-- Repository: 100 files maximum
+Fork the repository
+Create a feature branch
+Make your changes with tests
+Submit a pull request
 
-## Advanced Usage
+License
+[MIT]
+Support
+For issues, questions, or feature requests, please:
 
-### Custom Test Templates
+Check the logs for detailed error information
+Review the troubleshooting section
+Open an issue on the repository
 
-Create custom test templates by modifying prompts in `llm_handler.py`:
 
-```python
-def generate_unit_tests(self, code: str, file_name: str, context: Dict):
-    prompt = f"""Your custom prompt here...
-    
-    Use framework: pytest/unittest/jest
-    Follow pattern: Given-When-Then
-    ...
-    """
-```
-
-### Integration with CI/CD
-
-```yaml
-# Example GitHub Actions workflow
-name: Generate Tests
-on: [push]
-jobs:
-  generate-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python
-        uses: actions/setup-python@v2
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Generate tests
-        run: python generate_tests_cli.py  # Create CLI version
-```
-
-## API Reference
-
-### LLMHandler
-
-```python
-llm = LLMHandler(model_name="llama3")
-
-# Generate unit tests
-tests = llm.generate_unit_tests(code, filename, context)
-
-# Generate regression tests
-tests = llm.generate_regression_tests(old_code, new_code, changes)
-
-# Generate functional tests
-tests = llm.generate_functional_tests(code, module_info)
-```
-
-### CodeParser
-
-```python
-parser = CodeParser()
-
-# Parse code
-parsed = parser.parse_code(code, filename)
-# Returns: {functions, classes, imports, complexity, ...}
-
-# Detect language
-lang = parser.detect_language("script.py")
-```
-
-### RAGSystem
-
-```python
-rag = RAGSystem()
-
-# Add documents
-rag.add_code_documents(parsed_data)
-
-# Get relevant context
-context = rag.get_relevant_context("unit tests for login")
-
-# Search functions
-results = rag.search_by_function("authenticate")
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Support
-
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Contact: [pranabesh_paul@yahoo.co.in]
-
-## Acknowledgments
-
-- Llama3 by Meta AI
-- Streamlit for the amazing UI framework
-- Ollama for local LLM hosting
+Streamlit for the web interface
+Python AST for code parsing
+Modern LLM technology for intelligent test generation
