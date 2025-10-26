@@ -1,3 +1,6 @@
+"""
+Test Generator with enhanced logging and chunking support
+"""
 from typing import Dict, List
 from llm_handler import LLMHandler
 from rag_system import RAGSystem
@@ -13,7 +16,7 @@ class TestGenerator:
         self.llm = llm_handler
         self.rag = rag_system
         self.chunker = CodeChunker(max_chunk_size=1500)
-        logger.info("TestGenerator initialized with chunking support")
+        logger.info("✅ TestGenerator initialized with chunking support")
     
     def generate_tests(
         self,
@@ -32,9 +35,12 @@ class TestGenerator:
         Returns:
             Dictionary mapping test types to lists of test cases
         """
-        logger.info(f"Starting CHUNKED test generation for types: {test_types}")
-        logger.info(f"Module level: {module_level}")
-        logger.info(f"Number of files: {len(parsed_data)}")
+        logger.info("="*60)
+        logger.info(f"🚀 Starting CHUNKED test generation")
+        logger.info(f"📋 Test types: {test_types}")
+        logger.info(f"📊 Module level: {module_level}")
+        logger.info(f"📁 Number of files: {len(parsed_data)}")
+        logger.info("="*60)
         
         all_tests = {
             'Unit Test': [],
@@ -44,40 +50,40 @@ class TestGenerator:
         
         # Generate unit tests
         if 'Unit Test' in test_types:
-            logger.info("Generating unit tests with chunking...")
+            logger.info("⚡ Generating unit tests with chunking...")
             try:
                 all_tests['Unit Test'] = self._generate_unit_tests_chunked(parsed_data)
-                logger.info(f" Generated {len(all_tests['Unit Test'])} unit tests")
+                logger.info(f"✅ Generated {len(all_tests['Unit Test'])} unit tests")
             except Exception as e:
-                logger.error(f"Error generating unit tests: {e}", exc_info=True)
+                logger.error(f"❌ Error generating unit tests: {e}", exc_info=True)
         
         # Generate regression tests
         if 'Regression Test' in test_types:
-            logger.info("Generating regression tests with chunking...")
+            logger.info("⚡ Generating regression tests with chunking...")
             try:
                 all_tests['Regression Test'] = self._generate_regression_tests_chunked(parsed_data)
-                logger.info(f" Generated {len(all_tests['Regression Test'])} regression tests")
+                logger.info(f"✅ Generated {len(all_tests['Regression Test'])} regression tests")
             except Exception as e:
-                logger.error(f"Error generating regression tests: {e}", exc_info=True)
+                logger.error(f"❌ Error generating regression tests: {e}", exc_info=True)
         
         # Generate functional tests
         if 'Functional Test' in test_types:
-            logger.info("Generating functional tests with chunking...")
+            logger.info("⚡ Generating functional tests with chunking...")
             try:
                 all_tests['Functional Test'] = self._generate_functional_tests_chunked(
                     parsed_data,
                     module_level
                 )
-                logger.info(f" Generated {len(all_tests['Functional Test'])} functional tests")
+                logger.info(f"✅ Generated {len(all_tests['Functional Test'])} functional tests")
             except Exception as e:
-                logger.error(f"Error generating functional tests: {e}", exc_info=True)
+                logger.error(f"❌ Error generating functional tests: {e}", exc_info=True)
         
         # Log summary
         total = sum(len(tests) for tests in all_tests.values())
         logger.info("="*60)
-        logger.info(f"TEST GENERATION COMPLETE: {total} total tests")
+        logger.info(f"🎉 TEST GENERATION COMPLETE: {total} total tests")
         for test_type, tests in all_tests.items():
-            logger.info(f"  {test_type}: {len(tests)} tests")
+            logger.info(f"   • {test_type}: {len(tests)} tests")
         logger.info("="*60)
         
         return all_tests
@@ -85,25 +91,25 @@ class TestGenerator:
     def _generate_unit_tests_chunked(self, parsed_data: Dict) -> List[Dict]:
         """Generate unit tests using code chunking"""
         logger.info("="*60)
-        logger.info("UNIT TEST GENERATION (CHUNKED)")
+        logger.info("📝 UNIT TEST GENERATION (CHUNKED)")
         logger.info("="*60)
         
         all_unit_tests = []
         
         for filename, data in parsed_data.items():
-            logger.info(f"\n Processing file: {filename}")
+            logger.info(f"\n📄 Processing file: {filename}")
             
             # Chunk the code
             chunks = self.chunker.chunk_code(data['code'], data)
             chunk_summary = self.chunker.get_chunk_summary(chunks)
             
-            logger.info(f"Created {chunk_summary['total_chunks']} chunks:")
+            logger.info(f"🔧 Created {chunk_summary['total_chunks']} chunks:")
             for chunk_type, count in chunk_summary['by_type'].items():
-                logger.info(f"  - {chunk_type}: {count}")
+                logger.info(f"   • {chunk_type}: {count}")
             
             # Generate tests for each chunk
             for i, chunk in enumerate(chunks, 1):
-                logger.info(f"\n  Processing chunk {i}/{len(chunks)}: {chunk['name']} ({chunk['type']})")
+                logger.info(f"\n   ⚙️ Processing chunk {i}/{len(chunks)}: {chunk['name']} ({chunk['type']})")
                 
                 try:
                     chunk_tests = self.llm.generate_tests_for_chunk(
@@ -112,32 +118,32 @@ class TestGenerator:
                         filename
                     )
                     
-                    logger.info(f"    Generated {len(chunk_tests)} tests for this chunk")
+                    logger.info(f"      ✅ Generated {len(chunk_tests)} tests for this chunk")
                     all_unit_tests.extend(chunk_tests)
                     
                 except Exception as e:
-                    logger.error(f"    Error processing chunk {chunk['name']}: {e}")
+                    logger.error(f"      ❌ Error processing chunk {chunk['name']}: {e}")
                     continue
         
-        logger.info(f"\n Total unit tests generated: {len(all_unit_tests)}")
+        logger.info(f"\n📊 Total unit tests generated: {len(all_unit_tests)}")
         return all_unit_tests
     
     def _generate_regression_tests_chunked(self, parsed_data: Dict) -> List[Dict]:
         """Generate regression tests using code chunking"""
         logger.info("="*60)
-        logger.info("REGRESSION TEST GENERATION (CHUNKED)")
+        logger.info("📝 REGRESSION TEST GENERATION (CHUNKED)")
         logger.info("="*60)
         
         all_regression_tests = []
         
         for filename, data in parsed_data.items():
-            logger.info(f"\n Processing file: {filename}")
+            logger.info(f"\n📄 Processing file: {filename}")
             
             # Check if there's previous version in RAG
             previous_versions = self.rag.get_code_versions(filename)
             
             if previous_versions:
-                logger.info(f"Found previous version for {filename}")
+                logger.info(f"🔍 Found previous version for {filename}")
                 
                 # Chunk both old and new code
                 old_data = {
@@ -150,11 +156,11 @@ class TestGenerator:
                 old_chunks = self.chunker.chunk_code(old_data['code'], old_data)
                 new_chunks = self.chunker.chunk_code(data['code'], data)
                 
-                logger.info(f"Old code: {len(old_chunks)} chunks, New code: {len(new_chunks)} chunks")
+                logger.info(f"📊 Old code: {len(old_chunks)} chunks, New code: {len(new_chunks)} chunks")
                 
                 # Compare chunks and generate tests for changed ones
                 changed_chunks = self._identify_changed_chunks(old_chunks, new_chunks)
-                logger.info(f"Identified {len(changed_chunks)} changed chunks")
+                logger.info(f"🔄 Identified {len(changed_chunks)} changed chunks")
                 
                 for chunk in changed_chunks:
                     try:
@@ -165,10 +171,10 @@ class TestGenerator:
                         )
                         all_regression_tests.extend(chunk_tests)
                     except Exception as e:
-                        logger.error(f"Error processing changed chunk: {e}")
+                        logger.error(f"❌ Error processing changed chunk: {e}")
                         continue
             else:
-                logger.info(f"No previous version for {filename}, generating basic regression tests")
+                logger.info(f"ℹ️ No previous version for {filename}, generating basic regression tests")
                 
                 # Generate basic regression tests for new files
                 chunks = self.chunker.chunk_code(data['code'], data)
@@ -183,23 +189,23 @@ class TestGenerator:
                         )
                         all_regression_tests.extend(chunk_tests)
                     except Exception as e:
-                        logger.error(f"Error processing chunk: {e}")
+                        logger.error(f"❌ Error processing chunk: {e}")
                         continue
         
-        logger.info(f"\n Total regression tests generated: {len(all_regression_tests)}")
+        logger.info(f"\n📊 Total regression tests generated: {len(all_regression_tests)}")
         return all_regression_tests
     
     def _generate_functional_tests_chunked(self, parsed_data: Dict, module_level: bool) -> List[Dict]:
         """Generate functional tests using code chunking"""
         logger.info("="*60)
-        logger.info("FUNCTIONAL TEST GENERATION (CHUNKED)")
+        logger.info("📝 FUNCTIONAL TEST GENERATION (CHUNKED)")
+        logger.info(f"📊 Module level: {module_level}")
         logger.info("="*60)
-        logger.info(f"Module level: {module_level}")
         
         all_functional_tests = []
         
         if module_level:
-            logger.info("Generating MODULE-LEVEL functional tests")
+            logger.info("🎯 Generating MODULE-LEVEL functional tests")
             
             # Combine all files and chunk
             all_code = ""
@@ -221,11 +227,11 @@ class TestGenerator:
             
             # Chunk the combined code
             chunks = self.chunker.chunk_code(all_code, combined_data)
-            logger.info(f"Created {len(chunks)} chunks from combined module code")
+            logger.info(f"🔧 Created {len(chunks)} chunks from combined module code")
             
             # Generate functional tests for each chunk
             for i, chunk in enumerate(chunks, 1):
-                logger.info(f"\n  Processing module chunk {i}/{len(chunks)}: {chunk['name']}")
+                logger.info(f"\n   ⚙️ Processing module chunk {i}/{len(chunks)}: {chunk['name']}")
                 
                 try:
                     chunk_tests = self.llm.generate_tests_for_chunk(
@@ -238,27 +244,27 @@ class TestGenerator:
                     for test in chunk_tests:
                         test['scope'] = 'module'
                     
-                    logger.info(f"    Generated {len(chunk_tests)} functional tests for this chunk")
+                    logger.info(f"      ✅ Generated {len(chunk_tests)} functional tests for this chunk")
                     all_functional_tests.extend(chunk_tests)
                     
                 except Exception as e:
-                    logger.error(f"    Error processing module chunk: {e}")
+                    logger.error(f"      ❌ Error processing module chunk: {e}")
                     continue
         
         else:
-            logger.info("Generating FILE-LEVEL functional tests")
+            logger.info("🎯 Generating FILE-LEVEL functional tests")
             
             # Process each file separately
             for filename, data in parsed_data.items():
-                logger.info(f"\n Processing file: {filename}")
+                logger.info(f"\n📄 Processing file: {filename}")
                 
                 # Chunk the code
                 chunks = self.chunker.chunk_code(data['code'], data)
-                logger.info(f"Created {len(chunks)} chunks")
+                logger.info(f"🔧 Created {len(chunks)} chunks")
                 
                 # Generate functional tests for each chunk
                 for i, chunk in enumerate(chunks, 1):
-                    logger.info(f"  Processing chunk {i}/{len(chunks)}: {chunk['name']}")
+                    logger.info(f"   ⚙️ Processing chunk {i}/{len(chunks)}: {chunk['name']}")
                     
                     try:
                         chunk_tests = self.llm.generate_tests_for_chunk(
@@ -271,15 +277,15 @@ class TestGenerator:
                         for test in chunk_tests:
                             test['scope'] = 'file'
                         
-                        logger.info(f"    Generated {len(chunk_tests)} functional tests")
+                        logger.info(f"      ✅ Generated {len(chunk_tests)} functional tests")
                         all_functional_tests.extend(chunk_tests)
                         
                     except Exception as e:
-                        logger.error(f"    Error processing chunk: {e}")
+                        logger.error(f"      ❌ Error processing chunk: {e}")
                         continue
         
         logger.info("="*60)
-        logger.info(f"FUNCTIONAL TEST GENERATION COMPLETE: {len(all_functional_tests)} tests")
+        logger.info(f"🎉 FUNCTIONAL TEST GENERATION COMPLETE: {len(all_functional_tests)} tests")
         logger.info("="*60)
         
         return all_functional_tests
@@ -297,11 +303,11 @@ class TestGenerator:
             if name not in old_chunk_map:
                 # New chunk
                 changed.append(new_chunk)
-                logger.debug(f"New chunk identified: {name}")
+                logger.debug(f"🆕 New chunk identified: {name}")
             elif old_chunk_map[name]['code'] != new_chunk['code']:
                 # Modified chunk
                 changed.append(new_chunk)
-                logger.debug(f"Modified chunk identified: {name}")
+                logger.debug(f"🔄 Modified chunk identified: {name}")
         
         return changed
     
@@ -328,8 +334,9 @@ class TestGenerator:
         
         # Calculate coverage estimate
         if summary['total_tests'] > 0:
-            # More sophisticated estimate based on chunks covered
             chunks_covered = len(summary['by_chunk'])
             summary['coverage_estimate'] = min(100, chunks_covered * 10 + summary['total_tests'] * 2)
+        
+        logger.info(f"📊 Test Summary: {summary['total_tests']} tests across {len(summary['by_file'])} files")
         
         return summary

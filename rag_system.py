@@ -1,8 +1,14 @@
+"""
+RAG System for code context retrieval with enhanced logging
+"""
 from typing import List, Dict, Optional
 import json
 from pathlib import Path
 from datetime import datetime
 import hashlib
+from logger import get_app_logger
+
+logger = get_app_logger("rag_system")
 
 class RAGSystem:
     """Simple RAG system for code context retrieval"""
@@ -16,6 +22,9 @@ class RAGSystem:
         self.embeddings = {}
         self.metadata = {}
         
+        logger.info(" RAG System initialized")
+        logger.info(f" Storage directory: {self.storage_dir.absolute()}")
+        
         # Load existing data
         self._load_storage()
     
@@ -26,8 +35,16 @@ class RAGSystem:
         Args:
             parsed_data: Dictionary of parsed code files
         """
+        logger.info(f" Adding {len(parsed_data)} code documents to RAG system")
+        
+        added_count = 0
+        updated_count = 0
+        
         for filename, data in parsed_data.items():
             doc_id = self._generate_doc_id(filename, data['code'])
+            
+            # Check if document already exists
+            is_update = doc_id in self.code_documents
             
             # Store document
             self.code_documents[doc_id] = {
@@ -52,6 +69,15 @@ class RAGSystem:
                 'num_classes': len(data.get('classes', [])),
                 'loc': data.get('lines_of_code', 0)
             }
+            
+            if is_update:
+                updated_count += 1
+                logger.debug(f"  Updated: {filename}")
+            else:
+                added_count += 1
+                logger.debug(f"  Added: {filename}")
+        
+        logger.info(f" RAG update complete: {added_count} added, {updated_count} updated")
         
         # Persist to disk
         self._save_storage()
@@ -71,11 +97,15 @@ class RAGSystem:
         Returns:
             Formatted context string
         """
+        logger.debug(f" Searching for context: '{query[:50]}...'")
+        
         if not self.code_documents:
+            logger.warning(" No code documents available in RAG system")
             return "No code context available."
         
         # Simple keyword matching
         query_keywords = self._extract_keywords(query.lower())
+        logger.debug(f"   Keywords extracted: {list(query_keywords.keys())[:5]}")
         
         # Score documents
         scores = {}
@@ -90,10 +120,14 @@ class RAGSystem:
             reverse=True
         )[:max_results]
         
+        logger.debug(f"   Top scores: {[f'{doc[:8]}:{score:.2f}' for doc, score in sorted_docs[:3]]}")
+        
         # Format context
         context_parts = []
+        relevant_count = 0
+        
         for doc_id, score in sorted_docs:
-            if score > 0:  # Only include relevant results
+            if score > 0:
                 doc = self.code_documents[doc_id]
                 context_parts.append(
                     f"File: {doc['filename']}\n"
@@ -102,24 +136,35 @@ class RAGSystem:
                     f"Classes: {', '.join([c['name'] for c in doc['classes'][:3]])}\n"
                     f"Code snippet:\n{doc['code'][:500]}...\n"
                 )
+                relevant_count += 1
+        
+        if relevant_count > 0:
+            logger.info(f" Found {relevant_count} relevant documents")
+        else:
+            logger.warning(" No relevant context found")
         
         return "\n---\n".join(context_parts) if context_parts else "No relevant context found."
     
     def get_code_versions(self, filename: str) -> List[Dict]:
         """Get all versions of a specific file"""
+        logger.debug(f" Retrieving versions for: {filename}")
+        
         versions = []
         
         for doc_id, doc in self.code_documents.items():
             if doc['filename'] == filename:
                 versions.append(doc)
         
-        # Sort by timestamp
         versions.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        logger.debug(f"   Found {len(versions)} version(s)")
         
         return versions
     
     def search_by_function(self, function_name: str) -> List[Dict]:
         """Search for documents containing a specific function"""
+        logger.debug(f" Searching for function: {function_name}")
+        
         results = []
         
         for doc_id, doc in self.code_documents.items():
@@ -131,10 +176,14 @@ class RAGSystem:
                         'function': func
                     })
         
+        logger.debug(f"   Found {len(results)} match(es)")
+        
         return results
     
     def search_by_class(self, class_name: str) -> List[Dict]:
         """Search for documents containing a specific class"""
+        logger.debug(f" Searching for class: {class_name}")
+        
         results = []
         
         for doc_id, doc in self.code_documents.items():
@@ -145,6 +194,8 @@ class RAGSystem:
                         'filename': doc['filename'],
                         'class': cls
                     })
+        
+        logger.debug(f"   Found {len(results)} match(es)")
         
         return results
     
@@ -165,13 +216,19 @@ class RAGSystem:
             for doc in self.code_documents.values()
         )
         
-        return {
+        stats = {
             'total_documents': len(self.code_documents),
             'total_functions': total_functions,
             'total_classes': total_classes,
             'languages': list(languages),
             'storage_size': len(json.dumps(self.code_documents))
         }
+        
+        logger.debug(f" RAG Statistics: {stats['total_documents']} docs, "
+                    f"{stats['total_functions']} functions, "
+                    f"{stats['total_classes']} classes")
+        
+        return stats
     
     def _generate_doc_id(self, filename: str, code: str) -> str:
         """Generate unique document ID"""
@@ -212,7 +269,6 @@ class RAGSystem:
     
     def _extract_keywords(self, text: str) -> Dict[str, int]:
         """Extract keywords from text"""
-        # Remove common stop words
         stop_words = {
             'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
             'to', 'for', 'of', 'with', 'by', 'from', 'as', 'is', 'was',
@@ -225,7 +281,6 @@ class RAGSystem:
         keywords = {}
         
         for word in words:
-            # Clean word
             word = ''.join(c for c in word if c.isalnum() or c == '_')
             
             if word and word not in stop_words and len(word) > 2:
@@ -251,14 +306,22 @@ class RAGSystem:
         """Save RAG data to disk"""
         storage_file = self.storage_dir / "rag_data.json"
         
-        data = {
-            'code_documents': self.code_documents,
-            'embeddings': self.embeddings,
-            'metadata': self.metadata
-        }
-        
-        with open(storage_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
+        try:
+            data = {
+                'code_documents': self.code_documents,
+                'embeddings': self.embeddings,
+                'metadata': self.metadata,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            with open(storage_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            
+            file_size = storage_file.stat().st_size / 1024
+            logger.debug(f" RAG data saved ({file_size:.2f} KB)")
+            
+        except Exception as e:
+            logger.error(f" Error saving RAG storage: {e}", exc_info=True)
     
     def _load_storage(self):
         """Load RAG data from disk"""
@@ -268,17 +331,28 @@ class RAGSystem:
             try:
                 with open(storage_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    
+                
                 self.code_documents = data.get('code_documents', {})
                 self.embeddings = data.get('embeddings', {})
                 self.metadata = data.get('metadata', {})
-            except Exception:
-                # If loading fails, start fresh
-                pass
+                
+                last_updated = data.get('last_updated', 'unknown')
+                logger.info(f" Loaded existing RAG data (last updated: {last_updated})")
+                logger.info(f"   Documents: {len(self.code_documents)}")
+                
+            except Exception as e:
+                logger.error(f" Error loading RAG storage: {e}")
+                logger.info("   Starting with fresh storage")
+        else:
+            logger.info("No existing RAG data found, starting fresh")
     
     def clear_storage(self):
         """Clear all stored data"""
+        logger.info(" Clearing all RAG storage")
+        
         self.code_documents = {}
         self.embeddings = {}
         self.metadata = {}
         self._save_storage()
+        
+        logger.info(" RAG storage cleared")

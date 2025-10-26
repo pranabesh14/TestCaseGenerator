@@ -18,6 +18,7 @@ class CodeChunker:
             max_chunk_size: Maximum size of each chunk in characters
         """
         self.max_chunk_size = max_chunk_size
+        logger.info(f" CodeChunker initialized (max_chunk_size={max_chunk_size})")
     
     def chunk_code(self, code: str, parsed_data: Dict) -> List[Dict]:
         """
@@ -31,6 +32,7 @@ class CodeChunker:
             List of code chunks with metadata
         """
         language = parsed_data.get('language', 'unknown')
+        logger.debug(f"Chunking {language} code ({len(code)} chars)")
         
         if language == 'python':
             return self._chunk_python(code, parsed_data)
@@ -47,7 +49,7 @@ class CodeChunker:
             tree = ast.parse(code)
             lines = code.split('\n')
             
-            # Get imports (add to every chunk for context)
+            # Get imports
             imports = self._extract_imports(code)
             
             # Process each class
@@ -55,9 +57,7 @@ class CodeChunker:
                 cls_name = cls['name']
                 line = cls.get('line', 1)
                 
-                # Find class end line
                 end_line = self._find_class_end(tree, cls_name, line)
-                
                 class_code = '\n'.join(lines[line-1:end_line])
                 
                 chunks.append({
@@ -70,7 +70,7 @@ class CodeChunker:
                     'methods': cls.get('methods', [])
                 })
             
-            # Process standalone functions (not in classes)
+            # Process standalone functions
             class_lines = set()
             for cls in parsed_data.get('classes', []):
                 line = cls.get('line', 1)
@@ -81,16 +81,12 @@ class CodeChunker:
                 func_name = func['name']
                 line = func.get('line', 1)
                 
-                # Skip if function is inside a class
                 if line in class_lines:
                     continue
                 
-                # Find function end line
                 end_line = self._find_function_end(tree, func_name, line)
-                
                 func_code = '\n'.join(lines[line-1:end_line])
                 
-                # Only add if not too large, otherwise split further
                 if len(func_code) <= self.max_chunk_size:
                     chunks.append({
                         'type': 'function',
@@ -102,7 +98,6 @@ class CodeChunker:
                         'args': func.get('args', [])
                     })
                 else:
-                    # Function is too large, keep it as is but mark it
                     chunks.append({
                         'type': 'function',
                         'name': func_name,
@@ -114,7 +109,6 @@ class CodeChunker:
                         'args': func.get('args', [])
                     })
             
-            # If we have no chunks, create one with full code
             if not chunks:
                 chunks.append({
                     'type': 'module',
@@ -126,11 +120,10 @@ class CodeChunker:
                 })
             
         except Exception as e:
-            logger.error(f"Error chunking Python code: {e}")
-            # Fallback to simple chunking
+            logger.error(f" Error chunking Python code: {e}")
             return self._chunk_generic(code, parsed_data)
         
-        logger.info(f"Created {len(chunks)} chunks from Python code")
+        logger.debug(f" Created {len(chunks)} chunks from Python code")
         return chunks
     
     def _chunk_javascript(self, code: str, parsed_data: Dict) -> List[Dict]:
@@ -138,17 +131,11 @@ class CodeChunker:
         chunks = []
         lines = code.split('\n')
         
-        # Simple regex-based chunking for JS
-        import re
-        
-        # Find function boundaries
         for func in parsed_data.get('functions', []):
             func_name = func['name']
             line = func.get('line', 1)
             
-            # Try to find function end (simple heuristic)
             end_line = self._find_js_function_end(lines, line)
-            
             func_code = '\n'.join(lines[line-1:end_line])
             
             if len(func_code) <= self.max_chunk_size:
@@ -161,7 +148,6 @@ class CodeChunker:
                     'size': len(func_code)
                 })
         
-        # Find classes
         for cls in parsed_data.get('classes', []):
             cls_name = cls['name']
             line = cls.get('line', 1)
@@ -181,7 +167,7 @@ class CodeChunker:
         if not chunks:
             return self._chunk_generic(code, parsed_data)
         
-        logger.info(f"Created {len(chunks)} chunks from JavaScript code")
+        logger.debug(f"Created {len(chunks)} chunks from JavaScript code")
         return chunks
     
     def _chunk_generic(self, code: str, parsed_data: Dict) -> List[Dict]:
@@ -197,7 +183,6 @@ class CodeChunker:
             line_size = len(line)
             
             if current_size + line_size > self.max_chunk_size and current_chunk:
-                # Save current chunk
                 chunks.append({
                     'type': 'segment',
                     'name': f'segment_{chunk_num}',
@@ -214,7 +199,6 @@ class CodeChunker:
             current_chunk.append(line)
             current_size += line_size
         
-        # Add last chunk
         if current_chunk:
             chunks.append({
                 'type': 'segment',
@@ -225,7 +209,7 @@ class CodeChunker:
                 'size': current_size
             })
         
-        logger.info(f"Created {len(chunks)} generic chunks")
+        logger.debug(f" Created {len(chunks)} generic chunks")
         return chunks
     
     def _extract_imports(self, code: str) -> str:
@@ -243,7 +227,7 @@ class CodeChunker:
                     names = ', '.join([alias.name for alias in node.names])
                     imports.append(f"from {module} import {names}")
             
-            return '\n'.join(imports[:10])  # Limit to 10 imports
+            return '\n'.join(imports[:10])
         except:
             return ""
     
@@ -253,12 +237,11 @@ class CodeChunker:
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 if hasattr(node, 'end_lineno'):
                     return node.end_lineno
-                # Estimate based on body
                 if node.body:
                     last_node = node.body[-1]
                     if hasattr(last_node, 'end_lineno'):
                         return last_node.end_lineno
-        return start_line + 20  # Default estimate
+        return start_line + 20
     
     def _find_function_end(self, tree, func_name: str, start_line: int) -> int:
         """Find the end line of a function"""
@@ -266,15 +249,14 @@ class CodeChunker:
             if isinstance(node, ast.FunctionDef) and node.name == func_name:
                 if hasattr(node, 'end_lineno'):
                     return node.end_lineno
-                # Estimate
                 if node.body:
                     last_node = node.body[-1]
                     if hasattr(last_node, 'end_lineno'):
                         return last_node.end_lineno
-        return start_line + 15  # Default estimate
+        return start_line + 15
     
     def _find_js_function_end(self, lines: List[str], start_line: int) -> int:
-        """Find end of JavaScript function (simple brace matching)"""
+        """Find end of JavaScript function"""
         brace_count = 0
         in_function = False
         

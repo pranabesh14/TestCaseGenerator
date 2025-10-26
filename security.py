@@ -1,10 +1,20 @@
+"""
+Security Manager with comprehensive input validation and logging
+"""
 import re
 from typing import List, Dict, Tuple
+from datetime import datetime
+from pathlib import Path
+from logger import get_app_logger
+
+logger = get_app_logger("security")
 
 class SecurityManager:
     """Manage security and input sanitization"""
     
     def __init__(self):
+        logger.info(" Security Manager initialized")
+        
         # Malicious patterns to detect
         self.malicious_patterns = [
             # SQL injection attempts
@@ -16,7 +26,7 @@ class SecurityManager:
             # Script injection
             r"<script[^>]*>.*?</script>",
             # System commands
-            r"(eval|exec|system|subprocess|os\.system)",
+            r"(eval|exec|system|subprocess\.call|os\.system)",
         ]
         
         # Non-testing keywords that should trigger warnings
@@ -36,6 +46,14 @@ class SecurityManager:
         
         # Maximum input length
         self.max_input_length = 10000
+        
+        # Security event counter
+        self.security_events = {
+            'malicious_patterns': 0,
+            'invalid_queries': 0,
+            'large_inputs': 0,
+            'suspicious_code': 0
+        }
     
     def sanitize_input(self, user_input: str) -> str:
         """
@@ -47,9 +65,13 @@ class SecurityManager:
         Returns:
             Sanitized input
         """
+        original_length = len(user_input)
+        
         # Check length
         if len(user_input) > self.max_input_length:
+            logger.warning(f" Input exceeds maximum length: {len(user_input)} > {self.max_input_length}")
             user_input = user_input[:self.max_input_length]
+            self.security_events['large_inputs'] += 1
         
         # Remove null bytes
         user_input = user_input.replace('\x00', '')
@@ -63,7 +85,12 @@ class SecurityManager:
             if char.isprintable() or char in '\n\t'
         )
         
-        return user_input.strip()
+        sanitized = user_input.strip()
+        
+        if len(sanitized) != original_length:
+            logger.debug(f"🧹 Sanitized input: {original_length} → {len(sanitized)} chars")
+        
+        return sanitized
     
     def is_valid_test_query(self, query: str) -> bool:
         """
@@ -79,10 +106,16 @@ class SecurityManager:
         
         # Check for malicious patterns
         if self._contains_malicious_pattern(query):
+            logger.warning(f" Malicious pattern detected in query: {query[:50]}...")
+            self.security_events['malicious_patterns'] += 1
+            self._log_security_event('malicious_pattern', query[:100])
             return False
         
         # Check for non-testing keywords
-        if any(keyword in query_lower for keyword in self.non_testing_keywords):
+        found_bad_keywords = [kw for kw in self.non_testing_keywords if kw in query_lower]
+        if found_bad_keywords:
+            logger.warning(f" Suspicious keywords found: {', '.join(found_bad_keywords)}")
+            self.security_events['invalid_queries'] += 1
             return False
         
         # Check if query contains testing-related keywords
@@ -114,12 +147,20 @@ class SecurityManager:
             for pattern in testing_patterns
         )
         
-        return has_testing_keyword or has_testing_pattern
+        is_valid = has_testing_keyword or has_testing_pattern
+        
+        if not is_valid:
+            logger.debug(f" Query does not appear to be test-related: {query[:50]}...")
+        else:
+            logger.debug(f" Valid test query detected")
+        
+        return is_valid
     
     def _contains_malicious_pattern(self, text: str) -> bool:
         """Check if text contains malicious patterns"""
         for pattern in self.malicious_patterns:
             if re.search(pattern, text, re.IGNORECASE):
+                logger.warning(f" Malicious pattern matched: {pattern}")
                 return True
         return False
     
@@ -133,12 +174,17 @@ class SecurityManager:
         Returns:
             Tuple of (is_valid, error_message)
         """
+        logger.debug(f" Validating code input ({len(code)} chars)")
+        
         # Check for extremely long code
         if len(code) > 500000:  # 500KB
+            logger.warning(" Code file is too large")
             return False, "Code file is too large (max 500KB)"
         
         # Check for malicious patterns
         if self._contains_malicious_pattern(code):
+            logger.warning(" Code contains potentially malicious patterns")
+            self.security_events['suspicious_code'] += 1
             return False, "Code contains potentially malicious patterns"
         
         # Check for suspicious imports (relaxed for legitimate code)
@@ -154,9 +200,10 @@ class SecurityManager:
         ]
         
         if found_suspicious:
-            # This is a warning, not a blocker, as legitimate code might use these
+            logger.info(f"ℹ Code contains potentially dangerous functions: {', '.join(found_suspicious)}")
             return True, f"Warning: Code contains potentially dangerous functions: {', '.join(found_suspicious)}"
         
+        logger.debug(" Code validation passed")
         return True, ""
     
     def validate_git_url(self, url: str) -> Tuple[bool, str]:
@@ -169,10 +216,20 @@ class SecurityManager:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Check for valid URL format
-        git_url_pattern = r'^https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(/.*)?\.git$|^https?://github\.com/[\w-]+/[\w.-]+/?$'
+        logger.debug(f" Validating Git URL: {url}")
         
-        if not re.match(git_url_pattern, url):
+        # Check for valid URL format
+        git_url_patterns = [
+            r'^https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(/.*)?\.git$',
+            r'^https?://github\.com/[\w-]+/[\w.-]+/?$',
+            r'^https?://gitlab\.com/[\w-]+/[\w.-]+/?$',
+            r'^https?://bitbucket\.org/[\w-]+/[\w.-]+/?$',
+        ]
+        
+        is_valid_format = any(re.match(pattern, url) for pattern in git_url_patterns)
+        
+        if not is_valid_format:
+            logger.warning(f"⚠️ Invalid Git URL format: {url}")
             return False, "Invalid Git repository URL format"
         
         # Check for localhost or private IPs
@@ -186,8 +243,10 @@ class SecurityManager:
         
         for pattern in private_patterns:
             if re.search(pattern, url, re.IGNORECASE):
+                logger.warning(f" Attempted to access local/private repository: {url}")
                 return False, "Cannot access local or private repositories"
         
+        logger.debug(" Git URL validation passed")
         return True, ""
     
     def sanitize_filename(self, filename: str) -> str:
@@ -200,6 +259,8 @@ class SecurityManager:
         Returns:
             Sanitized filename
         """
+        original = filename
+        
         # Remove directory traversal
         filename = filename.replace('..', '').replace('/', '_').replace('\\', '_')
         
@@ -210,6 +271,9 @@ class SecurityManager:
         if len(filename) > 255:
             name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
             filename = name[:250] + ('.' + ext if ext else '')
+        
+        if filename != original:
+            logger.debug(f" Sanitized filename: {original} → {filename}")
         
         return filename
     
@@ -224,11 +288,11 @@ class SecurityManager:
         Returns:
             True if within rate limits, False otherwise
         """
-        # This is a placeholder - implement actual rate limiting with Redis or similar
-        # For now, always return True
+        # Placeholder - implement actual rate limiting with Redis or similar
+        logger.debug(f" Rate limit check: user={user_id}, action={action}")
         return True
     
-    def log_security_event(self, event_type: str, details: Dict):
+    def _log_security_event(self, event_type: str, details: str):
         """
         Log security events
         
@@ -236,10 +300,6 @@ class SecurityManager:
             event_type: Type of security event
             details: Event details
         """
-        from datetime import datetime
-        from pathlib import Path
-        import json
-        
         log_dir = Path("logs")
         log_dir.mkdir(exist_ok=True)
         
@@ -251,12 +311,15 @@ class SecurityManager:
             'details': details
         }
         
-        with open(log_file, 'a') as f:
-            f.write(json.dumps(event) + '\n')
+        try:
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(event) + '\n')
+        except Exception as e:
+            logger.error(f" Error logging security event: {e}")
     
     def get_safe_response_template(self) -> str:
         """Get template for safe rejection responses"""
-        return """I can only assist with generating test cases for code. 
+        return """I can only assist with generating test cases for code.
 
 I cannot help with:
 - Writing production code (only test code)
@@ -269,3 +332,18 @@ Please ask questions related to:
 - Testing strategies and best practices
 - Code analysis for testing purposes
 - Test coverage and quality"""
+    
+    def get_security_statistics(self) -> Dict:
+        """Get security event statistics"""
+        stats = {
+            'total_events': sum(self.security_events.values()),
+            'by_type': self.security_events.copy(),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        logger.debug(f" Security stats: {stats['total_events']} total events")
+        
+        return stats
+
+# Required for security event logging
+import json

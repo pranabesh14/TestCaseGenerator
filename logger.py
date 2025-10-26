@@ -1,14 +1,15 @@
 """
-Logging utility module for the Test Case Generator
+Comprehensive logging utility module for the Test Case Generator
 """
 import logging
 import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+import json
 
 class Logger:
-    """Centralized logging utility"""
+    """Centralized logging utility with enhanced formatting"""
     
     _loggers = {}
     
@@ -51,13 +52,13 @@ class Logger:
             datefmt='%H:%M:%S'
         )
         
-        # Console handler
+        # Console handler with color support
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(simple_formatter)
         logger.addHandler(console_handler)
         
-        # File handler
+        # File handler with detailed logging
         if log_file:
             log_file.parent.mkdir(exist_ok=True, parents=True)
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -75,13 +76,13 @@ class Logger:
         """Decorator to log function calls"""
         def decorator(func):
             def wrapper(*args, **kwargs):
-                logger.debug(f"Calling {func.__name__} with args={args}, kwargs={kwargs}")
+                logger.debug(f" Calling {func.__name__} with args={args}, kwargs={kwargs}")
                 try:
                     result = func(*args, **kwargs)
-                    logger.debug(f"{func.__name__} completed successfully")
+                    logger.debug(f" {func.__name__} completed successfully")
                     return result
                 except Exception as e:
-                    logger.error(f"{func.__name__} raised {type(e).__name__}: {str(e)}")
+                    logger.error(f" {func.__name__} raised {type(e).__name__}: {str(e)}")
                     raise
             return wrapper
         return decorator
@@ -97,7 +98,7 @@ class Logger:
                 result = func(*args, **kwargs)
                 
                 elapsed_time = time.time() - start_time
-                logger.info(f"{func.__name__} took {elapsed_time:.2f} seconds")
+                logger.info(f" {func.__name__} took {elapsed_time:.2f} seconds")
                 
                 return result
             return wrapper
@@ -116,8 +117,6 @@ class StructuredLogger:
     
     def log(self, level: str, message: str, **kwargs):
         """Log a structured message"""
-        import json
-        
         log_entry = {
             'timestamp': datetime.now().isoformat(),
             'logger': self.name,
@@ -130,8 +129,16 @@ class StructuredLogger:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(log_entry) + '\n')
         
-        # Also print to console
-        print(f"[{level}] {message}")
+        # Also print to console with emoji
+        emoji_map = {
+            'INFO': 'ℹ️',
+            'WARNING': '⚠️',
+            'ERROR': '❌',
+            'DEBUG': '🔍',
+            'CRITICAL': '🚨'
+        }
+        emoji = emoji_map.get(level, '📝')
+        print(f"{emoji} [{level}] {message}")
     
     def info(self, message: str, **kwargs):
         self.log('INFO', message, **kwargs)
@@ -144,6 +151,9 @@ class StructuredLogger:
     
     def debug(self, message: str, **kwargs):
         self.log('DEBUG', message, **kwargs)
+    
+    def critical(self, message: str, **kwargs):
+        self.log('CRITICAL', message, **kwargs)
 
 
 class TestGenerationLogger:
@@ -156,18 +166,20 @@ class TestGenerationLogger:
         self.generation_log = self.log_dir / "test_generation.log"
         self.error_log = self.log_dir / "errors.log"
         self.performance_log = self.log_dir / "performance.log"
+        
+        self.logger = get_app_logger("test_generation_logger")
     
     def log_generation_start(self, test_type: str, file_count: int):
         """Log start of test generation"""
-        self._write_log(
-            self.generation_log,
-            {
-                'event': 'generation_start',
-                'test_type': test_type,
-                'file_count': file_count,
-                'timestamp': datetime.now().isoformat()
-            }
-        )
+        entry = {
+            'event': 'generation_start',
+            'test_type': test_type,
+            'file_count': file_count,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        self._write_log(self.generation_log, entry)
+        self.logger.info(f"🚀 Test generation started: {test_type} for {file_count} files")
     
     def log_generation_complete(
         self,
@@ -176,54 +188,53 @@ class TestGenerationLogger:
         duration: float
     ):
         """Log completion of test generation"""
-        self._write_log(
-            self.generation_log,
-            {
-                'event': 'generation_complete',
-                'test_type': test_type,
-                'test_count': test_count,
-                'duration_seconds': duration,
-                'timestamp': datetime.now().isoformat()
-            }
-        )
+        entry = {
+            'event': 'generation_complete',
+            'test_type': test_type,
+            'test_count': test_count,
+            'duration_seconds': duration,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        self._write_log(self.generation_log, entry)
+        self.logger.info(f"✅ Test generation complete: {test_count} tests in {duration:.2f}s")
     
     def log_error(self, error_type: str, error_message: str, context: dict = None):
         """Log an error"""
-        self._write_log(
-            self.error_log,
-            {
-                'event': 'error',
-                'error_type': error_type,
-                'error_message': error_message,
-                'context': context or {},
-                'timestamp': datetime.now().isoformat()
-            }
-        )
+        entry = {
+            'event': 'error',
+            'error_type': error_type,
+            'error_message': error_message,
+            'context': context or {},
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        self._write_log(self.error_log, entry)
+        self.logger.error(f"❌ Error: {error_type} - {error_message}")
     
     def log_performance(self, operation: str, duration: float, metadata: dict = None):
         """Log performance metrics"""
-        self._write_log(
-            self.performance_log,
-            {
-                'event': 'performance',
-                'operation': operation,
-                'duration_seconds': duration,
-                'metadata': metadata or {},
-                'timestamp': datetime.now().isoformat()
-            }
-        )
+        entry = {
+            'event': 'performance',
+            'operation': operation,
+            'duration_seconds': duration,
+            'metadata': metadata or {},
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        self._write_log(self.performance_log, entry)
+        self.logger.debug(f"⏱️ Performance: {operation} took {duration:.2f}s")
     
     def _write_log(self, log_file: Path, data: dict):
         """Write log entry to file"""
-        import json
-        
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(data) + '\n')
+        try:
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(data) + '\n')
+        except Exception as e:
+            self.logger.error(f"Failed to write log: {e}")
     
     def get_statistics(self) -> dict:
         """Get statistics from logs"""
-        import json
-        
         stats = {
             'total_generations': 0,
             'total_tests': 0,
@@ -237,36 +248,42 @@ class TestGenerationLogger:
         
         durations = []
         
-        with open(self.generation_log, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    entry = json.loads(line)
+        try:
+            with open(self.generation_log, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        
+                        if entry['event'] == 'generation_complete':
+                            stats['total_generations'] += 1
+                            stats['total_tests'] += entry['test_count']
+                            durations.append(entry['duration_seconds'])
+                            
+                            test_type = entry['test_type']
+                            if test_type not in stats['by_test_type']:
+                                stats['by_test_type'][test_type] = {
+                                    'count': 0,
+                                    'total_tests': 0
+                                }
+                            
+                            stats['by_test_type'][test_type]['count'] += 1
+                            stats['by_test_type'][test_type]['total_tests'] += entry['test_count']
                     
-                    if entry['event'] == 'generation_complete':
-                        stats['total_generations'] += 1
-                        stats['total_tests'] += entry['test_count']
-                        durations.append(entry['duration_seconds'])
-                        
-                        test_type = entry['test_type']
-                        if test_type not in stats['by_test_type']:
-                            stats['by_test_type'][test_type] = {
-                                'count': 0,
-                                'total_tests': 0
-                            }
-                        
-                        stats['by_test_type'][test_type]['count'] += 1
-                        stats['by_test_type'][test_type]['total_tests'] += entry['test_count']
-                
-                except json.JSONDecodeError:
-                    continue
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            self.logger.error(f"Error reading statistics: {e}")
         
         if durations:
             stats['average_duration'] = sum(durations) / len(durations)
         
         # Count errors
         if self.error_log.exists():
-            with open(self.error_log, 'r', encoding='utf-8') as f:
-                stats['error_count'] = sum(1 for _ in f)
+            try:
+                with open(self.error_log, 'r', encoding='utf-8') as f:
+                    stats['error_count'] = sum(1 for _ in f)
+            except:
+                pass
         
         return stats
 

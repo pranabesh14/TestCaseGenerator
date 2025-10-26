@@ -1,53 +1,50 @@
+"""
+LLM Handler with Google Gemini API integration
+"""
 import os
 from typing import List, Dict, Optional
-import requests
 import json
+import time
+import google.generativeai as genai
 from logger import get_app_logger
+from config import config
 
-# Initialize logger
 logger = get_app_logger("llm_handler")
 
 class LLMHandler:
-    """Handler for LLM interactions with support for formatted test cases"""
+    """Handler for LLM interactions using Google Gemini"""
     
-    def __init__(self, model_name: str = "llama3", api_endpoint: str = None):
-        """
-        Initialize LLM handler
+    def __init__(self):
+        """Initialize LLM handler with Gemini"""
+        self.api_key = config.GEMINI_API_KEY
+        self.model_name = config.GEMINI_MODEL
         
-        Args:
-            model_name: Name of the Llama model to use
-            api_endpoint: API endpoint for the LLM (e.g., Ollama)
-        """
-        self.model_name = model_name
-        self.api_endpoint = api_endpoint or os.getenv("LLM_API_ENDPOINT", "http://localhost:11434/api/generate")
+        if not self.api_key:
+            logger.error("Gemini API key not found!")
+            raise ValueError("GEMINI_API_KEY not set in environment variables")
         
-        logger.info(f"Initializing LLM Handler with model: {self.model_name}, endpoint: {self.api_endpoint}")
+        # Configure Gemini
+        genai.configure(api_key=self.api_key)
         
-        # Test connection on init
-        self._test_connection()
+        # Initialize model
+        self.model = genai.GenerativeModel(
+            model_name=self.model_name,
+            generation_config={
+                "temperature": config.GEMINI_TEMPERATURE,
+                "max_output_tokens": config.GEMINI_MAX_TOKENS,
+            }
+        )
         
-        # System prompt with strict boundaries
-        self.system_prompt = """You are a specialized AI assistant for test case generation ONLY. 
+        logger.info(f"✅ LLM Handler initialized with Gemini model: {self.model_name}")
+        
+        # System prompt
+        self.system_prompt = """You are a specialized AI assistant for test case generation ONLY.
 
 Generate comprehensive test cases in valid JSON format.
 Always return: [{"name": "test_name", "description": "desc", "code": "test code", "target": "function_name"}]"""
 
-    def _test_connection(self):
-        """Test LLM connection on initialization"""
-        try:
-            response = requests.get(
-                self.api_endpoint.replace('/api/generate', '/api/tags'),
-                timeout=5
-            )
-            if response.status_code == 200:
-                logger.info("LLM connection successful")
-            else:
-                logger.warning(f"LLM endpoint returned {response.status_code}")
-        except Exception as e:
-            logger.error(f"Cannot connect to LLM: {e}")
-
-    def _make_request(self, prompt: str, context: str = "") -> str:
-        """Make request to LLM API"""
+    def _make_request(self, prompt: str, context: str = "", max_retries: int = 3) -> str:
+        """Make request to Gemini API with retry logic"""
         
         full_prompt = f"{self.system_prompt}\n\n"
         
@@ -56,92 +53,63 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
         
         full_prompt += f"USER REQUEST:\n{prompt}\n\nRESPONSE:"
         
-        logger.info(f"Making LLM request to {self.api_endpoint}")
+        logger.info(f"📤 Making Gemini API request...")
+        logger.debug(f"Prompt length: {len(full_prompt)} characters")
         
-        max_retries = 3
         retry_delay = 2
         
         for attempt in range(max_retries):
             try:
-                payload = {
-                    "model": self.model_name,
-                    "prompt": full_prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                        "num_predict": 2000,  # Increased for detailed functional tests
-                        "num_ctx": 2048
-                    }
-                }
+                start_time = time.time()
                 
-                response = requests.post(
-                    self.api_endpoint,
-                    json=payload,
-                    timeout=180
-                )
+                response = self.model.generate_content(full_prompt)
                 
-                if response.status_code == 200:
-                    result = response.json()
-                    response_text = result.get('response', '')
-                    logger.info(f"LLM response received: {len(response_text)} chars")
-                    return response_text
+                elapsed = time.time() - start_time
+                
+                if response.text:
+                    logger.info(f"✅ Gemini response received in {elapsed:.2f}s ({len(response.text)} chars)")
+                    logger.debug(f"Response preview: {response.text[:200]}...")
+                    return response.text
                 else:
-                    error_msg = f"API returned status code {response.status_code}"
-                    logger.error(error_msg)
+                    logger.warning(f"⚠️ Empty response from Gemini (attempt {attempt + 1})")
                     if attempt < max_retries - 1:
-                        import time
                         time.sleep(retry_delay)
                         retry_delay *= 2
                         continue
-                    return f"Error: {error_msg}"
+                    return "Error: Empty response from Gemini"
                     
-            except requests.exceptions.Timeout:
-                logger.error(f"Request timed out (attempt {attempt + 1})")
-                if attempt < max_retries - 1:
-                    import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                return "Error: Request timed out"
-            except requests.exceptions.ConnectionError as e:
-                logger.error(f"Connection error: {str(e)}")
-                if attempt < max_retries - 1:
-                    import time
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                    continue
-                return "Error: Cannot connect to LLM endpoint"
             except Exception as e:
-                logger.error(f"LLM request error: {str(e)}", exc_info=True)
+                logger.error(f"❌ Gemini API error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                
+                if "quota" in str(e).lower():
+                    return "Error: API quota exceeded. Please check your Gemini API usage."
+                elif "api key" in str(e).lower():
+                    return "Error: Invalid API key. Please check your GEMINI_API_KEY."
+                
                 if attempt < max_retries - 1:
-                    import time
                     time.sleep(retry_delay)
                     retry_delay *= 2
                     continue
+                
                 return f"Error: {str(e)}"
         
         return "Error: Max retries exceeded"
     
-    def generate_tests_for_chunk(self, chunk: Dict, test_type: str, file_name: str = "") -> List[Dict]:
-        """
-        Generate tests for a specific code chunk
+    def generate_tests_for_chunk(
+        self,
+        chunk: Dict,
+        test_type: str,
+        file_name: str = ""
+    ) -> List[Dict]:
+        """Generate tests for a specific code chunk"""
         
-        Args:
-            chunk: Code chunk from CodeChunker
-            test_type: Type of test (Unit Test, Functional Test, etc.)
-            file_name: Source file name
-            
-        Returns:
-            List of test cases
-        """
-        logger.info(f"Generating {test_type} for chunk: {chunk['name']} ({chunk['type']})")
+        logger.info(f"🔧 Generating {test_type} for chunk: {chunk['name']} ({chunk['type']})")
         
         chunk_code = chunk['code']
         chunk_name = chunk['name']
         chunk_type = chunk['type']
         
-        # Build appropriate prompt based on test type
+        # Build prompt based on test type
         if test_type == "Unit Test":
             prompt = self._build_unit_test_prompt(chunk_code, chunk_name, chunk_type)
         elif test_type == "Functional Test":
@@ -154,12 +122,12 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
         response = self._make_request(prompt)
         
         if response.startswith("Error:"):
-            logger.error(f"LLM error for {chunk_name}: {response}")
+            logger.error(f"❌ LLM error for {chunk_name}: {response}")
             return self._generate_fallback_tests(chunk, test_type, file_name)
         
         tests = self._parse_test_response(response, test_type)
         
-        # Add chunk metadata to tests
+        # Add metadata
         for test in tests:
             test['file'] = file_name
             test['chunk_name'] = chunk_name
@@ -167,7 +135,7 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
             test['line_start'] = chunk.get('line_start', 0)
             test['line_end'] = chunk.get('line_end', 0)
         
-        logger.info(f"Generated {len(tests)} tests for chunk {chunk_name}")
+        logger.info(f"✅ Generated {len(tests)} tests for chunk {chunk_name}")
         return tests
     
     def _build_unit_test_prompt(self, code: str, chunk_name: str, chunk_type: str) -> str:
@@ -218,7 +186,7 @@ Return ONLY JSON array:
         return prompt
     
     def _build_functional_test_prompt(self, code: str, chunk_name: str, chunk_type: str) -> str:
-        """Build prompt for functional test generation in professional format"""
+        """Build prompt for functional test generation"""
         
         prompt = f"""Generate functional test cases for this code in PROFESSIONAL TEST CASE FORMAT.
 
@@ -227,14 +195,14 @@ Return ONLY JSON array:
 {code}
 ```
 
-Generate 3-5 functional test cases that cover:
+Generate 3-5 functional test cases covering:
 1. Valid/happy path scenarios
 2. Invalid input scenarios
 3. Edge cases
 4. Error handling
 5. Integration scenarios
 
-CRITICAL: Return test cases in this EXACT JSON format:
+Return test cases in this EXACT JSON format:
 [
   {{
     "test_case_id": "TC-XXX-01",
@@ -243,15 +211,6 @@ CRITICAL: Return test cases in this EXACT JSON format:
     "expected_result": "Detailed expected outcome of the test"
   }}
 ]
-
-Use appropriate prefixes for test_case_id based on what's being tested:
-- TC-TXT-XX for text/input processing
-- TC-IMG-XX for image processing
-- TC-API-XX for API endpoints
-- TC-FN-XX for functions
-- TC-INT-XX for integration tests
-
-Make steps clear and actionable. Make expected results specific and measurable.
 
 Return ONLY the JSON array, no other text."""
         
@@ -298,7 +257,7 @@ Return ONLY JSON array:
         """Parse LLM response into structured test cases"""
         
         if not response or response.startswith("Error:"):
-            logger.warning(f"Empty or error response for {test_type}")
+            logger.warning(f"⚠️ Empty or error response for {test_type}")
             return []
         
         try:
@@ -310,25 +269,24 @@ Return ONLY JSON array:
                 json_str = response[start_idx:end_idx]
                 tests = json.loads(json_str)
                 
-                # Validate and fix test structure
+                # Validate and structure tests
                 valid_tests = []
                 for i, test in enumerate(tests):
                     if isinstance(test, dict):
-                        # Check if this is a functional test case format
                         if 'test_case_id' in test and test_type == 'Functional Test':
-                            # Professional functional test case format
+                            # Professional format
                             valid_test = {
                                 'name': test.get('test_case_id', f'TC-FN-{i+1:02d}'),
                                 'test_case_id': test.get('test_case_id', f'TC-FN-{i+1:02d}'),
                                 'description': test.get('description', 'Test case'),
                                 'steps': test.get('steps', 'No steps provided'),
-                                'expected_result': test.get('expected_result', 'No expected result provided'),
+                                'expected_result': test.get('expected_result', 'No expected result'),
                                 'type': test_type,
                                 'target': test.get('target', 'general'),
                                 'format': 'professional'
                             }
                         else:
-                            # Code-based test format
+                            # Code format
                             valid_test = {
                                 'name': test.get('name', f'{test_type.lower().replace(" ", "_")}_{i+1}'),
                                 'description': test.get('description', 'Test case'),
@@ -340,28 +298,28 @@ Return ONLY JSON array:
                         valid_tests.append(valid_test)
                 
                 if valid_tests:
-                    logger.info(f"Successfully parsed {len(valid_tests)} tests from JSON")
+                    logger.info(f"✅ Parsed {len(valid_tests)} tests from JSON")
                     return valid_tests
             
-            # Try plain text parsing
-            logger.info("Attempting plain text parsing")
+            # Fallback to plain text parsing
+            logger.info("⚠️ Attempting plain text parsing")
             return self._parse_plain_text_tests(response, test_type)
                 
         except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
+            logger.error(f"❌ JSON decode error: {e}")
             return self._parse_plain_text_tests(response, test_type)
         except Exception as e:
-            logger.error(f"Error parsing test response: {e}", exc_info=True)
+            logger.error(f"❌ Error parsing test response: {e}", exc_info=True)
             return []
     
     def _parse_plain_text_tests(self, response: str, test_type: str) -> List[Dict]:
         """Parse plain text response into test cases"""
-        
         import re
+        
         code_blocks = re.findall(r'```(?:python)?\n(.*?)```', response, re.DOTALL)
         
         if code_blocks:
-            logger.info(f"Found {len(code_blocks)} code blocks")
+            logger.info(f"📝 Found {len(code_blocks)} code blocks")
             tests = []
             for i, code in enumerate(code_blocks, 1):
                 tests.append({
@@ -378,19 +336,18 @@ Return ONLY JSON array:
     
     def _generate_fallback_tests(self, chunk: Dict, test_type: str, file_name: str) -> List[Dict]:
         """Generate fallback tests when LLM fails"""
-        logger.warning(f"Generating fallback tests for {chunk['name']}")
+        logger.warning(f"⚠️ Generating fallback tests for {chunk['name']}")
         
         chunk_name = chunk['name']
         chunk_type = chunk['type']
         
         if test_type == "Functional Test":
-            # Generate professional format fallback
             return [{
                 'name': f'TC-FN-01',
                 'test_case_id': f'TC-FN-01',
                 'description': f'Functional test for {chunk_name} ({chunk_type})',
                 'steps': f'Step 1: Initialize {chunk_name}\nStep 2: Execute main functionality\nStep 3: Verify expected behavior',
-                'expected_result': f'{chunk_name} should execute successfully and return expected output without errors',
+                'expected_result': f'{chunk_name} should execute successfully and return expected output',
                 'type': test_type,
                 'target': chunk_name,
                 'file': file_name,
@@ -398,7 +355,6 @@ Return ONLY JSON array:
                 'format': 'professional'
             }]
         else:
-            # Generate code format fallback
             test_name = f"test_{chunk_name}_{test_type.lower().replace(' ', '_')}"
             return [{
                 'name': test_name,
@@ -407,11 +363,9 @@ Return ONLY JSON array:
     \"\"\"
     {test_type} for {chunk_name} ({chunk_type})
     File: {file_name}
-    Lines: {chunk.get('line_start', '?')}-{chunk.get('line_end', '?')}
     
     TODO: LLM generation failed. Implement test manually.
     \"\"\"
-    # Test implementation here
     pass""",
                 'type': test_type,
                 'target': chunk_name,
@@ -420,24 +374,37 @@ Return ONLY JSON array:
                 'format': 'code'
             }]
     
-    def generate_chat_response(self, user_message: str, context: str, chat_history: List[Dict]) -> str:
+    def generate_chat_response(
+        self,
+        user_message: str,
+        context: str = "",
+        chat_history: List[Dict] = None
+    ) -> str:
         """Generate response for chat interface"""
         
-        logger.info(f"Generating chat response for message: {user_message[:50]}...")
+        logger.info(f"💬 Generating chat response for: {user_message[:50]}...")
         
-        history_text = "\n".join([
-            f"{msg['role'].upper()}: {msg['content']}"
-            for msg in chat_history[-5:]
-        ])
+        # Build conversation context
+        history_text = ""
+        if chat_history:
+            history_text = "\n".join([
+                f"{msg['role'].upper()}: {msg['content']}"
+                for msg in chat_history[-5:]  # Last 5 messages
+            ])
         
-        prompt = f"""Previous conversation:
+        prompt = f"""You are a helpful AI assistant for test case generation.
+
+Previous conversation:
 {history_text}
+
+Context (if any):
+{context}
 
 Current question: {user_message}
 
-Provide a helpful response focused on test case generation."""
+Provide a helpful, concise response focused on test case generation, code analysis, or testing strategies."""
         
-        response = self._make_request(prompt, context)
-        logger.info(f"Chat response generated: {len(response)} chars")
+        response = self._make_request(prompt)
+        logger.info(f"✅ Chat response generated ({len(response)} chars)")
         
         return response
