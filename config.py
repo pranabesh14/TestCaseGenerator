@@ -17,10 +17,10 @@ class Config:
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
     
     # Gemini Configuration
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.7"))
-    GEMINI_MAX_TOKENS = int(os.getenv("GEMINI_MAX_TOKENS", "8000"))
+    LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+    LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+    LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8000"))
     
     # File handling
     MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "1000000"))  # 1MB
@@ -87,8 +87,8 @@ class Config:
         """Validate configuration settings"""
         errors = []
         
-        if not cls.GEMINI_API_KEY:
-            errors.append("GEMINI_API_KEY is not set in .env file")
+        if not cls.LLM_API_KEY:
+            errors.append("LLM_API_KEY is not set in .env file")
         
         try:
             cls.create_directories()

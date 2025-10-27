@@ -24,7 +24,7 @@ logger = get_app_logger("streamlit_app")
 # Log application startup
 logger.info("="*60)
 logger.info(f"🚀 Test Case Generator v{config.APP_VERSION} - Starting")
-logger.info(f"🔧 Using Gemini Model: {config.GEMINI_MODEL}")
+logger.info(f"🔧 Using LLM Model: {config.LLM_MODEL}")
 logger.info("="*60)
 
 # Page configuration
@@ -168,7 +168,7 @@ def display_sidebar():
         
         # System info
         st.caption("ℹ️ System Information")
-        st.caption(f"🤖 Model: {config.GEMINI_MODEL}")
+        st.caption(f"🤖 Model: {config.LLM_MODEL}")
         st.caption(f"📦 Version: {config.APP_VERSION}")
         
         return test_types

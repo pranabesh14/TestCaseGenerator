@@ -1,5 +1,5 @@
 """
-LLM Handler with Google Gemini API integration
+LLM Handler with Google LLM API integration
 """
 import os
 from typing import List, Dict, Optional
@@ -12,30 +12,30 @@ from config import config
 logger = get_app_logger("llm_handler")
 
 class LLMHandler:
-    """Handler for LLM interactions using Google Gemini"""
+    """Handler for LLM interactions using Google LLM"""
     
     def __init__(self):
-        """Initialize LLM handler with Gemini"""
-        self.api_key = config.GEMINI_API_KEY
-        self.model_name = config.GEMINI_MODEL
+        """Initialize LLM handler with LLM"""
+        self.api_key = config.LLM_API_KEY
+        self.model_name = config.LLM_MODEL
         
         if not self.api_key:
-            logger.error("Gemini API key not found!")
-            raise ValueError("GEMINI_API_KEY not set in environment variables")
+            logger.error("LLM API key not found!")
+            raise ValueError("LLM_API_KEY not set in environment variables")
         
-        # Configure Gemini
+        # Configure LLM
         genai.configure(api_key=self.api_key)
         
         # Initialize model
         self.model = genai.GenerativeModel(
             model_name=self.model_name,
             generation_config={
-                "temperature": config.GEMINI_TEMPERATURE,
-                "max_output_tokens": config.GEMINI_MAX_TOKENS,
+                "temperature": config.LLM_TEMPERATURE,
+                "max_output_tokens": config.LLM_MAX_TOKENS,
             }
         )
         
-        logger.info(f"✅ LLM Handler initialized with Gemini model: {self.model_name}")
+        logger.info(f"✅ LLM Handler initialized with LLM model: {self.model_name}")
         
         # System prompt
         self.system_prompt = """You are a specialized AI assistant for test case generation ONLY.
@@ -44,7 +44,7 @@ Generate comprehensive test cases in valid JSON format.
 Always return: [{"name": "test_name", "description": "desc", "code": "test code", "target": "function_name"}]"""
 
     def _make_request(self, prompt: str, context: str = "", max_retries: int = 3) -> str:
-        """Make request to Gemini API with retry logic"""
+        """Make request to LLM API with retry logic"""
         
         full_prompt = f"{self.system_prompt}\n\n"
         
@@ -53,7 +53,7 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
         
         full_prompt += f"USER REQUEST:\n{prompt}\n\nRESPONSE:"
         
-        logger.info(f"📤 Making Gemini API request...")
+        logger.info(f"📤 Making LLM API request...")
         logger.debug(f"Prompt length: {len(full_prompt)} characters")
         
         retry_delay = 2
@@ -67,24 +67,24 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
                 elapsed = time.time() - start_time
                 
                 if response.text:
-                    logger.info(f"✅ Gemini response received in {elapsed:.2f}s ({len(response.text)} chars)")
+                    logger.info(f"✅ LLM response received in {elapsed:.2f}s ({len(response.text)} chars)")
                     logger.debug(f"Response preview: {response.text[:200]}...")
                     return response.text
                 else:
-                    logger.warning(f"⚠️ Empty response from Gemini (attempt {attempt + 1})")
+                    logger.warning(f"⚠️ Empty response from LLM (attempt {attempt + 1})")
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                         retry_delay *= 2
                         continue
-                    return "Error: Empty response from Gemini"
+                    return "Error: Empty response from LLM"
                     
             except Exception as e:
-                logger.error(f"❌ Gemini API error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logger.error(f"❌ LLM API error (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 
                 if "quota" in str(e).lower():
-                    return "Error: API quota exceeded. Please check your Gemini API usage."
+                    return "Error: API quota exceeded. Please check your LLM API usage."
                 elif "api key" in str(e).lower():
-                    return "Error: Invalid API key. Please check your GEMINI_API_KEY."
+                    return "Error: Invalid API key. Please check your LLM_API_KEY."
                 
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
