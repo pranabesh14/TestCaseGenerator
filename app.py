@@ -1,7 +1,10 @@
+
 import streamlit as st
 import os
-from pathlib import Path
+import re
+import time
 import json
+from pathlib import Path
 from datetime import datetime
 from llm_handler import LLMHandler
 from code_parser import CodeParser
@@ -12,51 +15,76 @@ from rag_system import RAGSystem
 from security import SecurityManager
 from logger import get_app_logger, TestGenerationLogger
 
-# Initialize logger
+# ---- Logger -------------------------------------------------------------------
 logger = get_app_logger("streamlit_app")
 test_logger = TestGenerationLogger()
+logger.info("=" * 60)
+logger.info("Test Case Generator – Unified Chat UI (full features)")
+logger.info("=" * 60)
 
-# Log application startup
-logger.info("="*60)
-logger.info("Test Case Generator - Application Starting")
-logger.info("="*60)
-
-# Page configuration
+# ---- Page config ---------------------------------------------------------------
 st.set_page_config(
-    page_title="Test Case Generator",
-    page_icon="🧪",
+    page_title="AI Test Case Generator",
+    page_icon="Test",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Initialize session state
-if 'chat_history' not in st.session_state:
+# ---- Session state -------------------------------------------------------------
+if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if 'uploaded_files' not in st.session_state:
+if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = {}
-if 'previous_code' not in st.session_state:
+if "previous_code" not in st.session_state:
     st.session_state.previous_code = {}
-if 'rag_system' not in st.session_state:
+if "rag_system" not in st.session_state:
     st.session_state.rag_system = RAGSystem()
-if 'llm_handler' not in st.session_state:
+if "llm_handler" not in st.session_state:
     st.session_state.llm_handler = LLMHandler()
-if 'security_manager' not in st.session_state:
+if "security_manager" not in st.session_state:
     st.session_state.security_manager = SecurityManager()
-if 'current_repo_path' not in st.session_state:
-    st.session_state.current_repo_path = None
+if "generated_tests" not in st.session_state:
+    st.session_state.generated_tests = {}
+if "last_repo_info" not in st.session_state:
+    st.session_state.last_repo_info = {}
+if "pending_git" not in st.session_state:
+    st.session_state.pending_git = None
+
+# # ---- Helper: chat history -------------------------------------------------------
+# def save_chat_history():
+#     history_dir = Path("chat_history")
+#     history_dir.mkdir(exist_ok=True)
+#     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+#     fn = history_dir / f"chat_{ts}.json"
+#     with open(fn, "w") as f:
+#         json.dump(st.session_state.chat_history, f, indent=2)
+#     return fn
+
+
+
 
 def generate_chat_name(message: str) -> str:
-    """Generate a chat name from first few words of message"""
+    """Generate a chat name from the first few words of a message"""
     # Clean the message
     words = message.strip().split()
-    # Take first 5 words, max 50 chars
+    
+    # Take the first 5 words, and add "..." if there are more than 5 words
     name_words = words[:5]
-    name = '_'.join(name_words)
-    # Remove special characters
-    name = ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
-    # Limit length
+    name = ' '.join(name_words)
+    if len(words) > 5:
+        name += "..."
+    
+    # Remove special characters (keep alphanumeric and underscores)
+    name = ''.join(c if c.isalnum() or c == ' ' else '_' for c in name)
+    
+    # Limit length to 50 characters
     name = name[:50]
+    
+    # Return the generated name or "chat" if empty
     return name if name else "chat"
+
+
+
 
 def has_context() -> bool:
     """Check if there's any context available (files, repo, or test results)"""
@@ -118,32 +146,79 @@ def load_chat_history(filename):
     with open(filename, 'r') as f:
         return json.load(f)
 
+# ---- Helper: change detection ---------------------------------------------------
+def detect_code_changes(file_name, current_code):
+    if file_name in st.session_state.previous_code:
+        prev = st.session_state.previous_code[file_name]
+        if prev != current_code:
+            prev_lines = set(prev.split("\n"))
+            cur_lines = set(current_code.split("\n"))
+            added = cur_lines - prev_lines
+            removed = prev_lines - cur_lines
+            return {
+                "changed": True,
+                "added_lines": len(added),
+                "removed_lines": len(removed),
+                "added": list(added)[:5],
+                "removed": list(removed)[:5],
+            }
+    return {"changed": False}
+
+# ---- Helper: test display -------------------------------------------------------
+def display_professional_test(test, index):
+    test_id = test.get("test_case_id", test.get("name", f"TC-{index:03d}"))
+    with st.container():
+        st.markdown(f"### {test_id}")
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**Description:** {test.get('description', 'N/A')}")
+        with col2:
+            pri = "High" if "Functional" in test.get("type", "") else "Medium"
+            st.markdown(f"**Priority:** {pri}")
+        st.markdown("**Target:** " + test.get("target", "N/A"))
+        if test.get("file"):
+            st.markdown("**File:** " + test.get("file", "N/A"))
+
+        st.markdown("#### Steps")
+        steps = test.get("steps", "N/A")
+        if steps != "N/A":
+            for s in steps.split("\n"):
+                if s.strip():
+                    st.markdown(f"- {s.strip()}")
+        else:
+            st.markdown("_No steps_")
+
+        st.markdown("#### Expected Result")
+        st.info(test.get("expected_result", "N/A"))
+        st.divider()
+
+
+def display_code_test(test, index):
+    name = test.get("name", f"Test {index}")
+    code = test.get("code", "No code")
+    desc = test.get("description", "")
+    file = test.get("file", "N/A")
+    chunk = test.get("chunk_name", "N/A")
+    st.markdown(f"**Test {index}:** {name}")
+    st.caption(f"{file} | Chunk: {chunk}")
+    if desc:
+        st.caption(desc)
+    st.code(code, language="python")
+
+# ---- Sidebar (unchanged) --------------------------------------------------------
 def display_sidebar():
-    """Display sidebar with options and chat history"""
     with st.sidebar:
-        st.title("🧪 Test Generator")
-        
-        # Test case type selection
+        st.title("Test Generator")
+        st.info("NEW: Functional tests in professional format!")
+
         st.subheader("Test Case Types")
         test_types = st.multiselect(
-            "Select test types:",
+            "Select test case types:",
             ["Unit Test", "Functional Test"],
             default=["Unit Test", "Functional Test"],
-            help="Regression tests have been removed for simplicity"
         )
-        
-        st.divider()
-        
-        # Format selection
-        st.subheader("⚙️ Output Format")
-        functional_format = st.radio(
-            "Functional Test Format:",
-            ["Professional (Test Case ID, Steps, Expected Result)", "Code-based (Test Functions)"],
-            help="Professional format matches industry standards"
-        )
-        
-        st.session_state.functional_format = "professional" if "Professional" in functional_format else "code"
-        
+
+    
         st.divider()
         
         # Chat history management
@@ -203,478 +278,341 @@ def display_sidebar():
                     if st.button(f"📄 {display_name}", key=chat_file.name, use_container_width=True):
                         st.session_state.chat_history = load_chat_history(chat_file)
                         st.rerun()
-        
         return test_types
 
-def process_files(uploaded_files, test_types):
-    """Process uploaded files and generate tests"""
-    import time
-    start_time = time.time()
-    
-    logger.info(f"Processing {len(uploaded_files)} files")
-    test_logger.log_generation_start(', '.join(test_types), len(uploaded_files))
-    
-    # Create progress indicators
-    with st.status("🔄 Processing files...", expanded=True) as status:
-        st.write("📝 Parsing code files...")
-        
-        # Parse code
-        parser = CodeParser()
-        parsed_data = {}
-        
-        for filename, content in uploaded_files.items():
-            parsed_data[filename] = parser.parse_code(content, filename)
-        
-        st.write("🧠 Building code context...")
-        st.session_state.rag_system.add_code_documents(parsed_data)
-        
-        st.write("🔬 Generating tests...")
-        generator = TestGenerator(
-            st.session_state.llm_handler,
-            st.session_state.rag_system
-        )
-        
-        test_cases = generator.generate_tests(
-            parsed_data,
-            test_types,
-            module_level=True
-        )
-        
-        total_tests = sum(len(tests) for tests in test_cases.values())
-        elapsed_time = time.time() - start_time
-        
-        status.update(label=f"✅ Complete! Generated {total_tests} tests in {elapsed_time:.1f}s", state="complete")
-    
-    logger.info(f"Generated {total_tests} test cases in {elapsed_time:.2f}s")
-    test_logger.log_generation_complete(', '.join(test_types), total_tests, elapsed_time)
-    
-    return test_cases, elapsed_time
+# ---- Unified Chat UI ------------------------------------------------------------
+def display_chat():
+    st.subheader("AI Test Case Generator")
 
-def process_git_repo(repo_url, branch, test_types):
-    """Process Git repository and generate tests"""
-    import time
-    start_time = time.time()
-    
-    logger.info(f"Processing Git repository: {repo_url}")
-    
-    with st.status("🔄 Processing repository...", expanded=True) as status:
-        # Clone/update repository
-        st.write("📥 Cloning/updating repository...")
-        git_handler = GitHandler()
-        repo_path = git_handler.clone_repository(repo_url, branch, depth=1)
-        st.session_state.current_repo_path = repo_path
-        
-        # Get code files
-        st.write("📂 Scanning for code files...")
-        code_files = git_handler.get_code_files(repo_path)
-        st.write(f"Found {len(code_files)} code files")
-        
-        # Parse code files
-        st.write("📝 Parsing code files...")
-        parser = CodeParser()
-        parsed_data = {}
-        
-        for file_path in code_files:
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    parsed_data[file_path.name] = parser.parse_code(content, file_path.name)
-            except Exception as e:
-                logger.error(f"Error parsing {file_path}: {e}")
-                continue
-        
-        if not parsed_data:
-            st.error("❌ No code files could be parsed")
-            return None, 0
-        
-        # Build RAG context
-        st.write("🧠 Building code context...")
-        st.session_state.rag_system.add_code_documents(parsed_data)
-        
-        # Generate tests
-        st.write("🔬 Generating tests...")
-        generator = TestGenerator(
-            st.session_state.llm_handler,
-            st.session_state.rag_system
-        )
-        
-        test_cases = generator.generate_tests(
-            parsed_data,
-            test_types,
-            module_level=True
-        )
-        
-        total_tests = sum(len(tests) for tests in test_cases.values())
-        elapsed_time = time.time() - start_time
-        
-        # Show repo info
-        repo_structure = git_handler.get_repo_structure(repo_path)
-        commit_info = git_handler.get_commit_info(repo_path)
-        
-        st.write(f"📊 Repo: {repo_structure['code_files']} code files, {len(repo_structure['languages'])} languages")
-        st.write(f"📌 Commit: {commit_info['hash']} by {commit_info['author']}")
-        
-        status.update(label=f"✅ Complete! Generated {total_tests} tests in {elapsed_time:.1f}s", state="complete")
-    
-    logger.info(f"Generated {total_tests} test cases in {elapsed_time:.2f}s")
-    
-    return test_cases, elapsed_time
+    # ----- Input row (chat + attach) -----
+    # col_chat = st.column
+    # with col_chat:
+    #     user_input = st.chat_input("Ask, paste Git URL, or type 'generate'...")
+    #     uploaded_files = st.file_uploader(
+    #         "Attach",
+    #         accept_multiple_files=True,
+    #         type=[
+    #             "py","js","java","cpp","c","cs","go","rb","php","swift","kt","ts","rs"
+    #         ],
+    #         key="chat_uploader",
+    #         # label_visibility="collapsed",
+    #     )
+    # import streamlit as st
 
-def display_test_results(test_cases, test_types):
-    """Display test results with download buttons"""
-    if not test_cases:
-        return
-    
-    total_tests = sum(len(tests) for tests in test_cases.values())
-    
-    if total_tests == 0:
-        st.warning("⚠️ No test cases were generated")
-        return
-    
-    # Show metrics
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric("Total Tests", total_tests)
-    with cols[1]:
-        st.metric("Unit Tests", len(test_cases.get('Unit Test', [])))
-    with cols[2]:
-        st.metric("Functional Tests", len(test_cases.get('Functional Test', [])))
-    
-    # Generate output files
-    csv_handler = CSVHandler()
-    csv_file = csv_handler.generate_csv(test_cases)
-    report_file = csv_handler.generate_professional_test_report(test_cases)
-    
-    # Download buttons
-    col1, col2 = st.columns(2)
-    
-    # Generate unique key using timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    with col1:
-        with open(csv_file, 'rb') as f:
-            st.download_button(
-                label="📥 Download CSV",
-                data=f,
-                file_name=f"test_cases_{timestamp}.csv",
-                mime="text/csv",
-                use_container_width=True,
-                key=f"download_csv_{timestamp}"  # Unique key
-            )
-    
-    with col2:
-        with open(report_file, 'rb') as f:
-            st.download_button(
-                label="📄 Download Report",
-                data=f,
-                file_name=f"test_report_{timestamp}.txt",
-                mime="text/plain",
-                use_container_width=True,
-                key=f"download_report_{timestamp}"  # Unique key
-            )
-    
-    # Display test cases in expandable sections
-    st.divider()
-    
-    for test_type in test_types:
-        if test_type in test_cases and len(test_cases[test_type]) > 0:
-            with st.expander(f"{test_type}s ({len(test_cases[test_type])} cases)", expanded=False):
-                for i, test in enumerate(test_cases[test_type][:10], 1):
-                    if test.get('format') == 'professional':
-                        # Professional format
-                        st.markdown(f"### {test.get('test_case_id', f'TC-{i:03d}')}")
-                        st.markdown(f"**Description:** {test.get('description', 'N/A')}")
-                        st.markdown(f"**Target:** {test.get('target', 'N/A')}")
-                        
-                        st.markdown("**Steps:**")
-                        steps = test.get('steps', 'N/A')
-                        if steps != 'N/A':
-                            for step in steps.split('\n'):
-                                if step.strip():
-                                    st.markdown(f"- {step.strip()}")
-                        
-                        st.markdown("**Expected Result:**")
-                        st.info(test.get('expected_result', 'N/A'))
-                    else:
-                        # Code format
-                        st.markdown(f"**Test {i}:** {test.get('name', 'Unnamed')}")
-                        st.caption(test.get('description', ''))
-                        st.code(test.get('code', 'No code'), language='python')
-                    
-                    st.divider()
-                
-                if len(test_cases[test_type]) > 10:
-                    st.info(f"... and {len(test_cases[test_type]) - 10} more tests (download files for full list)")
+    # Create a container or column for both chat input and file uploader
+    with st.container():  # This ensures both elements are inside the same section
+        user_input = st.chat_input("Ask, paste Git URL, or type 'generate'...")
 
-def main():
-    # Display sidebar and get test types
-    test_types = display_sidebar()
-    
-    # Main content - Single unified interface
-    st.title("🧪 AI Test Case Generator")
-    st.caption("Upload code files or provide a Git repository URL in the chat")
-    
-    # File uploader in main area (compact)
-    with st.container():
         uploaded_files = st.file_uploader(
-            "📎 Or upload files here",
+            "Attach",
             accept_multiple_files=True,
-            type=['py', 'js', 'java', 'cpp', 'c', 'cs', 'go', 'rb', 'php', 'swift', 'kt', 'ts', 'rs'],
-            label_visibility="collapsed"
+            type=[
+                "py", "js", "java", "cpp", "c", "cs", "go", "rb", "php", "swift", "kt", "ts", "rs"
+            ],
+            key="chat_uploader",
+            label_visibility="collapsed",  # Keeps the file uploader label hidden for a cleaner look
         )
-        
-        if uploaded_files:
-            st.caption(f"📁 {len(uploaded_files)} file(s) uploaded")
-            
-            # Process uploaded files
-            for uploaded_file in uploaded_files:
-                try:
-                    file_content = uploaded_file.read().decode('utf-8')
-                    st.session_state.uploaded_files[uploaded_file.name] = file_content
-                except Exception as e:
-                    logger.error(f"Error processing file {uploaded_file.name}: {str(e)}")
-                    st.error(f"Error: {uploaded_file.name}")
-    
-    st.divider()
-    
-    # Chat interface
-    st.subheader("💬 Chat")
-    
-    # Display chat history
-    for message in st.session_state.chat_history:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Display test results if available
-            if message["role"] == "assistant" and "test_results" in message:
-                display_test_results(message["test_results"], test_types)
-    
-    # Chat input
-    if prompt := st.chat_input("Ask me to generate tests, or paste a Git repository URL..."):
-        logger.info(f"User input: {prompt[:100]}...")
-        
-        # Sanitize input
-        sanitized_prompt = st.session_state.security_manager.sanitize_input(prompt)
-        
-        # Add user message to chat
-        st.session_state.chat_history.append({
-            "role": "user",
-            "content": sanitized_prompt,
-            "timestamp": datetime.now().isoformat()
-        })
-        
+
+    # Optional: display uploaded files below the uploader
+    if uploaded_files:
+        st.write(f"Uploaded files: {[file.name for file in uploaded_files]}")
+
+
+   
+
+ 
+    # ----- Show history -----
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # ----- Process uploaded files -----
+    if uploaded_files:
+        names = []
+        for uf in uploaded_files:
+            try:
+                txt = uf.read().decode("utf-8")
+                changes = detect_code_changes(uf.name, txt)
+                st.session_state.uploaded_files[uf.name] = txt
+                st.session_state.previous_code[uf.name] = txt
+
+                if changes["changed"]:
+                    st.warning(f"Changes in **{uf.name}**")
+                    with st.expander("View diff"):
+                        st.write(f"+{changes['added_lines']}  -{changes['removed_lines']} lines")
+                        if changes["added"]:
+                            st.write("**Added:** " + ", ".join(changes["added"]))
+                        if changes["removed"]:
+                            st.write("**Removed:** " + ", ".join(changes["removed"]))
+
+                lines = len(txt.splitlines())
+                with st.expander(f"{uf.name} ({lines} lines)"):
+                    st.code(txt[:1000], language="python")
+                    if len(txt) > 1000:
+                        st.caption(f"... ({len(txt)} chars total)")
+
+                names.append(f"`{uf.name}`")
+            except Exception as e:
+                st.error(f"Error reading {uf.name}: {e}")
+
+        if names:
+            msg = f"Uploaded: {', '.join(names)}"
+            st.session_state.chat_history.append(
+                {"role": "user", "content": msg, "timestamp": datetime.now().isoformat()}
+            )
+            with st.chat_message("user"):
+                st.markdown(msg)
+
+    # ----- Process text input -----
+    if user_input:
+        sanitized = st.session_state.security_manager.sanitize_input(user_input)
+        st.session_state.chat_history.append(
+            {"role": "user", "content": sanitized, "timestamp": datetime.now().isoformat()}
+        )
         with st.chat_message("user"):
-            st.markdown(sanitized_prompt)
-        
-        # Process the input
-        with st.chat_message("assistant"):
-            # Check if it's a Git URL
-            if sanitized_prompt.startswith(('http://', 'https://')) and ('github.com' in sanitized_prompt or 'gitlab.com' in sanitized_prompt or '.git' in sanitized_prompt):
-                # Extract URL and branch
-                parts = sanitized_prompt.split()
-                git_url = parts[0]
-                branch = parts[1] if len(parts) > 1 else "main"
-                
-                # Validate Git URL
-                is_valid, error_msg = st.session_state.security_manager.validate_git_url(git_url)
-                
-                if not is_valid:
-                    response = f"❌ Invalid Git URL: {error_msg}"
-                    st.markdown(response)
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": response,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                else:
-                    try:
-                        test_cases, elapsed_time = process_git_repo(git_url, branch, test_types)
-                        
-                        if test_cases:
-                            total_tests = sum(len(tests) for tests in test_cases.values())
-                            response = f"✅ Successfully generated **{total_tests}** test cases from repository in {elapsed_time:.1f}s"
-                            st.markdown(response)
-                            
-                            # Display results
-                            display_test_results(test_cases, test_types)
-                            
-                            # Save to chat history with results
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "test_results": test_cases,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                            
-                            # Auto-save after test generation
-                            auto_save_chat()
-                        else:
-                            response = "❌ Failed to generate tests from repository"
-                            st.markdown(response)
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                    
-                    except Exception as e:
-                        logger.error(f"Git processing error: {str(e)}", exc_info=True)
-                        response = f"❌ Error: {str(e)}"
-                        st.markdown(response)
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": response,
-                            "timestamp": datetime.now().isoformat()
-                        })
-            
-            # Check if asking to generate tests from uploaded files
-            elif any(keyword in sanitized_prompt.lower() for keyword in ['generate', 'create', 'analyze']):
-                if st.session_state.uploaded_files or has_context():
-                    try:
-                        # If files uploaded, process them
-                        if st.session_state.uploaded_files:
-                            test_cases, elapsed_time = process_files(st.session_state.uploaded_files, test_types)
-                            
-                            total_tests = sum(len(tests) for tests in test_cases.values())
-                            response = f"✅ Successfully generated **{total_tests}** test cases in {elapsed_time:.1f}s"
-                            st.markdown(response)
-                            
-                            # Display results
-                            display_test_results(test_cases, test_types)
-                            
-                            # Save to chat history with results
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "test_results": test_cases,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                            
-                            # Auto-save after test generation
-                            auto_save_chat()
-                        else:
-                            # Has context but no new files - answer based on existing context
-                            context = st.session_state.rag_system.get_relevant_context(sanitized_prompt)
-                            response = st.session_state.llm_handler.generate_chat_response(
-                                sanitized_prompt,
-                                context,
-                                st.session_state.chat_history
+            st.markdown(sanitized)
+
+        # ---- Git URL detection ----
+        git_pat = re.compile(r"(https?://|git@)[\w\.\-@:/~]+?\.git", re.IGNORECASE)
+        m = git_pat.search(sanitized)
+        if m:
+            url = m.group(0).strip()
+            st.session_state.pending_git = {"url": url, "stage": "ask_branch"}
+            bot = (
+                f"Found repository: **{url}**\n"
+                "Please tell me the **branch** (default: `main`):"
+            )
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": bot, "timestamp": datetime.now().isoformat()}
+            )
+            with st.chat_message("assistant"):
+                st.markdown(bot)
+            return
+
+        # ---- Generate from uploaded files (keyword) ----
+        if "generate" in sanitized.lower() and st.session_state.uploaded_files:
+            with st.chat_message("assistant"):
+                with st.spinner("Generating tests from uploaded files..."):
+                    start = time.time()
+                    parser = CodeParser()
+                    parsed = {
+                        n: parser.parse_code(c, n)
+                        for n, c in st.session_state.uploaded_files.items()
+                    }
+                    st.session_state.rag_system.add_code_documents(parsed)
+
+                    gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
+                    tests = gen.generate_tests(parsed, test_types, module_level=True)
+                    st.session_state.generated_tests = tests
+                    st.session_state.rag_system.add_test_cases(tests, session_id="current")
+
+                    total = sum(len(v) for v in tests.values())
+                    elapsed = time.time() - start
+
+                    st.success(f"Generated **{total}** tests in {elapsed:.2f}s")
+
+                    # ---- Metrics ----
+                    c1, c2, c3 = st.columns(3)
+                    with c1: st.metric("Total", total)
+                    with c2: st.metric("Unit", len(tests.get("Unit Test", [])))
+                    # with c3: st.metric("Regression", len(tests.get("Regression Test", [])))
+                    with c3: st.metric("Functional", len(tests.get("Functional Test", [])))
+
+                    # ---- Download ----
+                    csv_h = CSVHandler()
+                    csv_file = csv_h.generate_csv(tests)
+                    report_file = csv_h.generate_professional_test_report(tests)
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        with open(csv_file, "rb") as f:
+                            st.download_button(
+                                "CSV", data=f,
+                                file_name=f"tests_{datetime.now():%Y%m%d_%H%M%S}.csv",
+                                mime="text/csv",
                             )
-                            
-                            st.markdown(response)
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                    
-                    except Exception as e:
-                        logger.error(f"Test generation error: {str(e)}", exc_info=True)
-                        response = f"❌ Error generating tests: {str(e)}"
-                        st.markdown(response)
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": response,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                else:
-                    response = "📎 Please upload code files first, or provide a Git repository URL."
-                    st.markdown(response)
-                    st.session_state.chat_history.append({
-                        "role": "assistant",
-                        "content": response,
-                        "timestamp": datetime.now().isoformat()
-                    })
-            
-            # General chat
-            else:
-                # If we have context, allow broader questions
-                if has_context():
-                    try:
-                        context = st.session_state.rag_system.get_relevant_context(sanitized_prompt)
-                        
-                        # Include test results from chat history in context if available
-                        # Find the latest test results
-                        test_results = None
-                        for message in reversed(st.session_state.chat_history):
-                            if message.get("role") == "assistant" and "test_results" in message:
-                                test_results = message["test_results"]
-                                break
-                        
-                        test_context = ""
-                        if test_results:
-                            test_context += "\n\nPreviously generated tests:\n"
-                            for test_type, tests in test_results.items():
-                                test_context += f"{test_type}s ({len(tests)} tests):\n"
-                                # Limit to first 10 tests to avoid token overflow
-                                for i, test in enumerate(tests[:10], 1):
-                                    if test.get('format') == 'professional':
-                                        test_context += f"Test {i}: ID: {test.get('test_case_id', '')}, Description: {test.get('description', 'N/A')}, Steps: {test.get('steps', 'N/A')}, Expected: {test.get('expected_result', 'N/A')}\n"
+                    with d2:
+                        with open(report_file, "rb") as f:
+                            st.download_button(
+                                "Report", data=f,
+                                file_name=f"report_{datetime.now():%Y%m%d_%H%M%S}.txt",
+                                mime="text/plain",
+                            )
+
+                    # ---- Show tests (first 10 per type) ----
+                    for ttype in test_types:
+                        lst = tests.get(ttype, [])
+                        if lst:
+                            with st.expander(f"{ttype}s ({len(lst)})", expanded=True):
+                                for i, t in enumerate(lst[:10], 1):
+                                    if t.get("format") == "professional":
+                                        display_professional_test(t, i)
                                     else:
-                                        test_context += f"Test {i}: Name: {test.get('name', 'Unnamed')}, Description: {test.get('description', 'N/A')}, Code snippet: {test.get('code', 'No code')[:200]}...\n"
-                                if len(tests) > 10:
-                                    test_context += f"... and {len(tests) - 10} more tests\n"
-                            test_context += "\n"
-                        
-                        full_context = context + test_context
-                        
-                        response = st.session_state.llm_handler.generate_chat_response(
-                            sanitized_prompt,
-                            full_context,
-                            st.session_state.chat_history
-                        )
-                        
-                        st.markdown(response)
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": response,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                    except Exception as e:
-                        logger.error(f"Chat error: {str(e)}", exc_info=True)
-                        response = "Sorry, I encountered an error. Please try again."
-                        st.markdown(response)
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": response,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                else:
-                    # No context - check if it's a valid test query
-                    if not st.session_state.security_manager.is_valid_test_query(sanitized_prompt):
-                        response = "I can only assist with generating test cases. Please ask questions related to test case generation, code analysis, or provide a Git repository URL."
-                        st.markdown(response)
-                        st.session_state.chat_history.append({
-                            "role": "assistant",
-                            "content": response,
-                            "timestamp": datetime.now().isoformat()
-                        })
-                    else:
-                        try:
-                            context = st.session_state.rag_system.get_relevant_context(sanitized_prompt)
-                            response = st.session_state.llm_handler.generate_chat_response(
-                                sanitized_prompt,
-                                context,
-                                st.session_state.chat_history
+                                        display_code_test(t, i)
+                                if len(lst) > 10:
+                                    st.info(f"... and {len(lst)-10} more (download CSV)")
+
+            return
+
+        # ---- Normal LLM chat ----
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                ctx = st.session_state.rag_system.get_relevant_context(sanitized)
+                reply = st.session_state.llm_handler.generate_chat_response(
+                    sanitized, ctx, st.session_state.chat_history
+                )
+                st.markdown(reply)
+                st.session_state.chat_history.append(
+                    {"role": "assistant", "content": reply, "timestamp": datetime.now().isoformat()}
+                )
+
+    # ---- Pending Git flow (branch → clone → generate) ----
+    if st.session_state.pending_git and user_input:
+        pend = st.session_state.pending_git
+        if pend["stage"] == "ask_branch":
+            branch = user_input.strip() or "main"
+            pend["branch"] = branch
+            pend["stage"] = "processing"
+
+            with st.chat_message("assistant"):
+                st.markdown(f"Cloning **{branch}** …")
+
+            with st.spinner("Cloning & analysing repository…"):
+                try:
+                    gh = GitHandler()
+                    repo_path, change_info = gh.clone_or_pull_repository(
+                        pend["url"], branch, depth=1
+                    )
+
+                    # ---- No changes → reuse previous CSV ----
+                    if not change_info["has_changes"] and not change_info["is_new_repo"]:
+                        st.info("No new changes in the repository. No new test cases generated.")
+                        prev_csv = gh.get_previous_test_file(pend["url"])
+                        if prev_csv:
+                            csv_h = CSVHandler()
+                            report = csv_h.generate_no_changes_report(
+                                prev_csv,
+                                gh._sanitize_repo_name(pend["url"]),
+                                gh.get_commit_info(repo_path),
                             )
-                            
-                            st.markdown(response)
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "timestamp": datetime.now().isoformat()
-                            })
+                            st.success("No code changes – using previous test suite")
+                            d1, d2 = st.columns(2)
+                            with d1:
+                                with open(prev_csv, "rb") as f:
+                                    st.download_button(
+                                        "Previous CSV", data=f,
+                                        file_name=prev_csv.name, mime="text/csv"
+                                    )
+                            with d2:
+                                with open(report, "rb") as f:
+                                    st.download_button(
+                                        "No-Changes Report", data=f,
+                                        file_name=report.name, mime="text/plain"
+                                    )
+                            st.session_state.pending_git = None
+                            return
+
+                    # ---- Parse code (changed files or all) ----
+                    if change_info.get("has_changes"):
+                        code_files = gh.get_changed_code_files(
+                            repo_path, change_info.get("changed_files", [])
+                        )
+                        st.info(f"Processing **{len(code_files)}** changed files")
+                    else:
+                        code_files = gh.get_code_files(repo_path)
+
+                    parser = CodeParser()
+                    parsed = {}
+                    prog = st.progress(0)
+                    for i, fp in enumerate(code_files):
+                        try:
+                            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                                parsed[fp.name] = parser.parse_code(f.read(), fp.name)
                         except Exception as e:
-                            logger.error(f"Chat error: {str(e)}", exc_info=True)
-                            response = "Sorry, I encountered an error. Please try again."
-                            st.markdown(response)
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": response,
-                                "timestamp": datetime.now().isoformat()
-                            })
-        
-        st.rerun()
+                            logger.warning(f"Parse error {fp}: {e}")
+                        prog.progress((i + 1) / len(code_files))
+                    prog.empty()
+
+                    if not parsed:
+                        st.error("No code files could be parsed.")
+                        st.session_state.pending_git = None
+                        return
+
+                    st.session_state.rag_system.add_code_documents(parsed)
+
+                    # ---- Generate tests ----
+                    gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
+                    tests = gen.generate_tests(parsed, test_types, module_level=True)
+                    st.session_state.generated_tests = tests
+                    st.session_state.rag_system.add_test_cases(tests, session_id="current")
+
+                    total = sum(len(v) for v in tests.values())
+                    st.success(f"Generated **{total}** test cases")
+
+                    # ---- CSV handling (append or new) ----
+                    csv_h = CSVHandler()
+                    prev_csv = gh.get_previous_test_file(pend["url"])
+                    if prev_csv and change_info.get("has_changes"):
+                        csv_file = csv_h.append_to_previous_csv(prev_csv, tests, change_info)
+                        st.info("Appended new tests to previous suite")
+                    else:
+                        csv_file = csv_h.generate_csv_with_repo_name(
+                            tests, gh._sanitize_repo_name(pend["url"]), change_info
+                        )
+
+                    report_file = csv_h.generate_professional_test_report(tests)
+
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        with open(csv_file, "rb") as f:
+                            st.download_button(
+                                "CSV", data=f,
+                                file_name=f"tests_{datetime.now():%Y%m%d_%H%M%S}.csv",
+                                mime="text/csv",
+                            )
+                    with d2:
+                        with open(report_file, "rb") as f:
+                            st.download_button(
+                                "Report", data=f,
+                                file_name=f"report_{datetime.now():%Y%m%d_%H%M%S}.txt",
+                                mime="text/plain",
+                            )
+
+                    # ---- Repo stats ----
+                    with st.expander("Repository Statistics"):
+                        struct = gh.get_repo_structure(repo_path)
+                        c1, c2, c3 = st.columns(3)
+                        with c1: st.metric("Total Files", struct["total_files"])
+                        with c2: st.metric("Code Files", struct["code_files"])
+                        with c3: st.metric("Languages", len(struct["languages"]))
+                        if struct["languages"]:
+                            st.write(", ".join(struct["languages"]))
+
+                    # ---- Show first 10 tests per type ----
+                    for ttype in test_types:
+                        lst = tests.get(ttype, [])
+                        if lst:
+                            with st.expander(f"{ttype}s ({len(lst)})", expanded=False):
+                                for i, t in enumerate(lst[:10], 1):
+                                    if t.get("format") == "professional":
+                                        display_professional_test(t, i)
+                                    else:
+                                        display_code_test(t, i)
+                                if len(lst) > 10:
+                                    st.info(f"... and {len(lst)-10} more (download CSV)")
+
+                    st.session_state.pending_git = None
+
+                except Exception as e:
+                    st.error(f"Git processing failed: {e}")
+                    with st.expander("Details"):
+                        st.code(str(e))
+                    st.session_state.pending_git = None
+
+# ---- Main -----------------------------------------------------------------------
+def main():
+    global test_types
+    test_types = display_sidebar()
+    display_chat()
 
 if __name__ == "__main__":
     main()

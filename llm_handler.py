@@ -38,10 +38,50 @@ class LLMHandler:
         logger.info(f"✅ LLM Handler initialized with LLM model: {self.model_name}")
         
         # System prompt
-        self.system_prompt = """You are a specialized AI assistant for test case generation ONLY.
+#         self.system_prompt = """You are a specialized AI assistant for test case generation ONLY.
 
-Generate comprehensive test cases in valid JSON format.
-Always return: [{"name": "test_name", "description": "desc", "code": "test code", "target": "function_name"}]"""
+# Generate comprehensive test cases.
+# Always return: [{"name": "test_name", "description": "desc", "code": "test code", "target": "function_name"}]"""
+#         self.system_prompt = """You are a specialized AI assistant for test case generation ONLY.
+
+# YOUR SOLE PURPOSE: Generate unit tests and functional tests for code.
+
+# STRICT BOUNDARIES:
+# - You can ONLY discuss and help with: test case generation, testing strategies, code analysis for testing purposes, test coverage, and testing best practices.
+# - You CANNOT: write production code (only test code), discuss non-testing topics, answer general questions, or perform any other tasks.
+# - If asked about anything unrelated to test generation, respond: "I can only assist with generating test cases. Please ask questions related to test case generation, code analysis, or testing strategies."
+
+# CAPABILITIES:
+# - Analyze code structure and logic
+# - Generate unit tests with assertions
+# - Create regression tests for changed code
+# - Design functional tests for features
+# - Suggest edge cases and boundary conditions
+# - Provide test coverage recommendations
+
+# Always generate test cases that are:
+# - Clear and well-documented
+# - Follow testing best practices
+# - Include proper assertions
+# - Cover edge cases
+# - Are maintainable and readable"""
+        self.system_prompt="""You are a specialized AI assistant for test case generation.
+
+Your purpose is to:
+- Analyze code and generate unit, functional .
+- Focus on testing strategies, edge cases, and best practices.
+
+Strict Boundaries:
+-Do not show anything internal and do not show test senario in the answer .
+- You can only assist with generating test cases and related tasks.
+- While not generating test cases then If asked about anything else, respond with: "I can only assist with generating test cases. Please ask questions related to test case generation."
+
+Test case requirements:
+- Well-documented, clear, and maintainable
+- Proper assertions and edge cases
+- Follow testing best practices"""
+
+
 
     def _make_request(self, prompt: str, context: str = "", max_retries: int = 3) -> str:
         """Make request to LLM API with retry logic"""
@@ -114,8 +154,8 @@ Always return: [{"name": "test_name", "description": "desc", "code": "test code"
             prompt = self._build_unit_test_prompt(chunk_code, chunk_name, chunk_type)
         elif test_type == "Functional Test":
             prompt = self._build_functional_test_prompt(chunk_code, chunk_name, chunk_type)
-        elif test_type == "Regression Test":
-            prompt = self._build_regression_test_prompt(chunk_code, chunk_name, chunk_type)
+        # elif test_type == "Regression Test":
+        #     prompt = self._build_regression_test_prompt(chunk_code, chunk_name, chunk_type)
         else:
             prompt = self._build_generic_test_prompt(chunk_code, chunk_name, test_type)
         
@@ -374,6 +414,7 @@ Return ONLY JSON array:
                 'format': 'code'
             }]
     
+
     def generate_chat_response(
         self,
         user_message: str,
@@ -392,18 +433,21 @@ Return ONLY JSON array:
                 for msg in chat_history[-5:]  # Last 5 messages
             ])
         
+        # Updated system prompt to request plain text output
         prompt = f"""You are a helpful AI assistant for test case generation.
 
-Previous conversation:
-{history_text}
+    Previous conversation:
+    {history_text}
 
-Context (if any):
-{context}
+    Context (if any):
+    {context}
 
-Current question: {user_message}
+    Current question: {user_message}
 
-Provide a helpful, concise response focused on test case generation, code analysis, or testing strategies."""
+    Provide a clear, helpful response focused on test case generation, code analysis, or testing strategies.
+    Respond in plain text, without using structured formats like JSON, unless specifically requested."""
         
+        # Make the request to the model
         response = self._make_request(prompt)
         logger.info(f"✅ Chat response generated ({len(response)} chars)")
         

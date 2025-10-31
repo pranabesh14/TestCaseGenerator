@@ -1,17 +1,22 @@
 import os
 import shutil
-import stat
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 import subprocess
 import tempfile
+import json
+from datetime import datetime
 
 class GitHandler:
-    """Handle Git repository operations with smart update/pull functionality"""
+    """Handle Git repository operations with diff detection and incremental testing"""
     
     def __init__(self):
         self.repos_dir = Path("temp_repos")
         self.repos_dir.mkdir(exist_ok=True)
+        
+        # Store for tracking repository states
+        self.repo_states_file = self.repos_dir / "repo_states.json"
+        self.repo_states = self._load_repo_states()
         
         # Supported code file extensions
         self.code_extensions = {
@@ -20,98 +25,98 @@ class GitHandler:
             '.r', '.m', '.h', '.hpp'
         }
     
-    def _handle_remove_readonly(self, func, path, exc):
-        """
-        Error handler for Windows readonly files
-        Used with shutil.rmtree to handle permission errors
-        """
-        if func in (os.unlink, os.rmdir):
-            # Clear the readonly bit and retry
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        else:
-            raise
-    
-    def _safe_rmtree(self, path: Path) -> bool:
-        """
-        Safely remove directory tree, handling Windows file locks
-        
-        Args:
-            path: Path to remove
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if not path.exists():
-            return True
-        
-        try:
-            # On Windows, use onerror handler for readonly files
-            shutil.rmtree(path, onerror=self._handle_remove_readonly)
-            return True
-        except Exception as e:
-            print(f"⚠️  Warning: Could not remove {path}: {e}")
-            
-            # Try alternative approach: rename then delete
-            try:
-                import uuid
-                temp_name = path.parent / f"_delete_{uuid.uuid4().hex[:8]}"
-                path.rename(temp_name)
-                shutil.rmtree(temp_name, onerror=self._handle_remove_readonly)
-                return True
-            except:
-                pass
-            
-            return False
-    
-    def clone_repository(
+    def clone_or_pull_repository(
         self,
         repo_url: str,
         branch: str = "main",
-        depth: int = 1,
-        force_fresh: bool = False
-    ) -> Path:
+        depth: int = 1
+    ) -> Tuple[Path, Dict]:
         """
-        Clone a Git repository or update if it already exists
+        Clone repository or pull latest changes if already exists
         
         Args:
             repo_url: URL of the Git repository
             branch: Branch to clone/pull
             depth: Clone depth (1 for shallow clone)
-            force_fresh: If True, remove existing repo and clone fresh
             
         Returns:
-            Path to cloned repository
+            Tuple of (repo_path, change_info)
+            change_info contains: has_changes, changed_files, previous_commit, current_commit
         """
-        # Sanitize repo name
         repo_name = self._sanitize_repo_name(repo_url)
         repo_path = self.repos_dir / repo_name
         
-        # If force_fresh is True, remove existing repo
-        if force_fresh and repo_path.exists():
-            print(f"🗑️  Removing existing repository for fresh clone...")
-            if not self._safe_rmtree(repo_path):
-                raise Exception(f"Failed to remove existing repository. Please manually delete '{repo_path}' and try again.")
+        change_info = {
+            'has_changes': False,
+            'changed_files': [],
+            'new_files': [],
+            'deleted_files': [],
+            'modified_files': [],
+            'previous_commit': None,
+            'current_commit': None,
+            'is_new_repo': False
+        }
         
-        # Check if repository already exists locally
+        # Check if repo already exists
         if repo_path.exists() and (repo_path / '.git').exists():
-            # Repository exists - try to update it
-            print(f"📦 Repository already exists at {repo_path}")
+            print(f"Repository already exists at {repo_path}")
+            print("Pulling latest changes...")
             
             try:
-                return self._update_repository(repo_path, branch)
-            except Exception as e:
-                print(f"⚠️  Update failed: {str(e)}")
-                print(f"💡 Tip: You can continue using the existing code, or manually delete '{repo_path}' to clone fresh.")
+                # Get current commit before pulling
+                previous_commit = self._get_current_commit(repo_path)
+                change_info['previous_commit'] = previous_commit
                 
-                # Don't try to remove - just return existing path
-                # User can still work with existing code
-                print(f"✅ Using existing repository (may not be latest version)")
-                return repo_path
+                # Pull latest changes
+                result = subprocess.run(
+                    ['git', 'pull', 'origin', branch],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                
+                if result.returncode != 0:
+                    raise Exception(f"Git pull failed: {result.stderr}")
+                
+                # Get new commit after pulling
+                current_commit = self._get_current_commit(repo_path)
+                change_info['current_commit'] = current_commit
+                
+                # Check if there are changes
+                if previous_commit != current_commit:
+                    change_info['has_changes'] = True
+                    
+                    # Get list of changed files
+                    diff_info = self._get_diff_between_commits(
+                        repo_path, 
+                        previous_commit, 
+                        current_commit
+                    )
+                    change_info.update(diff_info)
+                    
+                    print(f"✓ Changes detected: {len(change_info['changed_files'])} files changed")
+                    print(f"  - Modified: {len(change_info['modified_files'])}")
+                    print(f"  - New: {len(change_info['new_files'])}")
+                    print(f"  - Deleted: {len(change_info['deleted_files'])}")
+                else:
+                    print("✓ No changes detected - repository is up to date")
+                
+                # Update repo state
+                self._save_repo_state(repo_url, repo_path, current_commit)
+                
+                return repo_path, change_info
+                
+            except Exception as e:
+                print(f"Error pulling repository: {e}")
+                print("Removing existing repo and cloning fresh...")
+                shutil.rmtree(repo_path)
         
-        # Clone repository fresh
+        # Clone repository (first time or after error)
+        change_info['is_new_repo'] = True
+        change_info['has_changes'] = True  # Treat as changes since it's new
+        
         try:
-            print(f"📥 Cloning repository from {repo_url}...")
             cmd = [
                 'git', 'clone',
                 '--branch', branch,
@@ -124,132 +129,187 @@ class GitHandler:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minutes timeout
+                timeout=300
             )
             
             if result.returncode != 0:
                 raise Exception(f"Git clone failed: {result.stderr}")
             
-            print(f"✅ Successfully cloned repository")
-            return repo_path
+            # Get initial commit
+            current_commit = self._get_current_commit(repo_path)
+            change_info['current_commit'] = current_commit
+            
+            # Get all code files as "new" files
+            code_files = self.get_code_files(repo_path)
+            change_info['new_files'] = [str(f.relative_to(repo_path)) for f in code_files]
+            change_info['changed_files'] = change_info['new_files']
+            
+            # Save repo state
+            self._save_repo_state(repo_url, repo_path, current_commit)
+            
+            print(f"✓ Repository cloned: {len(change_info['new_files'])} code files found")
+            
+            return repo_path, change_info
             
         except subprocess.TimeoutExpired:
             raise Exception("Git clone operation timed out")
         except Exception as e:
             raise Exception(f"Failed to clone repository: {str(e)}")
     
-    def _update_repository(self, repo_path: Path, branch: str) -> Path:
+    def get_changed_code_files(
+        self,
+        repo_path: Path,
+        changed_files: List[str]
+    ) -> List[Path]:
         """
-        Update an existing repository with latest changes
+        Get full paths of changed code files
         
         Args:
-            repo_path: Path to existing repository
-            branch: Branch to update
+            repo_path: Path to repository
+            changed_files: List of relative file paths
             
         Returns:
-            Path to updated repository
+            List of absolute paths to changed code files
         """
+        code_files = []
+        
+        for file_path in changed_files:
+            full_path = repo_path / file_path
+            
+            if full_path.exists() and full_path.suffix.lower() in self.code_extensions:
+                # Skip very large files (> 1MB)
+                if full_path.stat().st_size < 1_000_000:
+                    code_files.append(full_path)
+        
+        return code_files
+    
+    def _get_current_commit(self, repo_path: Path) -> str:
+        """Get current commit hash"""
         try:
-            # First, check if we're in a valid git repo
-            check_result = subprocess.run(
-                ['git', 'rev-parse', '--git-dir'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if check_result.returncode != 0:
-                raise Exception("Not a valid git repository")
-            
-            print(f"🔄 Fetching latest changes from origin/{branch}...")
-            
-            # Fetch latest changes
-            fetch_result = subprocess.run(
-                ['git', 'fetch', 'origin', branch],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=180
-            )
-            
-            if fetch_result.returncode != 0:
-                raise Exception(f"Git fetch failed: {fetch_result.stderr}")
-            
-            # Get current and remote commit hashes to check for changes
-            current_result = subprocess.run(
+            result = subprocess.run(
                 ['git', 'rev-parse', 'HEAD'],
                 cwd=repo_path,
                 capture_output=True,
                 text=True,
                 timeout=10
             )
-            
-            if current_result.returncode != 0:
-                raise Exception("Could not get current commit hash")
-            
-            current_hash = current_result.stdout.strip()
-            
-            remote_result = subprocess.run(
-                ['git', 'rev-parse', f'origin/{branch}'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            if remote_result.returncode != 0:
-                raise Exception(f"Could not get remote commit hash for branch {branch}")
-            
-            remote_hash = remote_result.stdout.strip()
-            
-            if current_hash == remote_hash:
-                print(f"✅ Repository is already up to date (commit: {current_hash[:7]})")
-                return repo_path
-            
-            # There are changes - update
-            print(f"📥 Updating from {current_hash[:7]} to {remote_hash[:7]}...")
-            
-            # Stash any local changes first (just in case)
-            subprocess.run(
-                ['git', 'stash'],
+            return result.stdout.strip() if result.returncode == 0 else 'unknown'
+        except Exception:
+            return 'unknown'
+    
+    def _get_diff_between_commits(
+        self,
+        repo_path: Path,
+        old_commit: str,
+        new_commit: str
+    ) -> Dict[str, List[str]]:
+        """
+        Get diff between two commits
+        
+        Returns:
+            Dictionary with changed_files, modified_files, new_files, deleted_files
+        """
+        diff_info = {
+            'changed_files': [],
+            'modified_files': [],
+            'new_files': [],
+            'deleted_files': []
+        }
+        
+        try:
+            # Get diff with file status
+            result = subprocess.run(
+                ['git', 'diff', '--name-status', f'{old_commit}..{new_commit}'],
                 cwd=repo_path,
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
-            # Reset to latest origin/branch
-            reset_result = subprocess.run(
-                ['git', 'reset', '--hard', f'origin/{branch}'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if reset_result.returncode != 0:
-                raise Exception(f"Git reset failed: {reset_result.stderr}")
-            
-            # Clean any untracked files
-            clean_result = subprocess.run(
-                ['git', 'clean', '-fd'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
-            if clean_result.returncode != 0:
-                print(f"⚠️  Warning: Git clean had issues: {clean_result.stderr}")
-            
-            print(f"✅ Successfully updated repository to latest {branch}")
-            return repo_path
-            
-        except subprocess.TimeoutExpired:
-            raise Exception("Git update operation timed out")
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                
+                for line in lines:
+                    if not line:
+                        continue
+                    
+                    parts = line.split('\t', 1)
+                    if len(parts) != 2:
+                        continue
+                    
+                    status, filepath = parts
+                    
+                    # Only include code files
+                    if Path(filepath).suffix.lower() in self.code_extensions:
+                        diff_info['changed_files'].append(filepath)
+                        
+                        if status == 'A':
+                            diff_info['new_files'].append(filepath)
+                        elif status == 'D':
+                            diff_info['deleted_files'].append(filepath)
+                        elif status == 'M':
+                            diff_info['modified_files'].append(filepath)
+        
         except Exception as e:
-            raise Exception(f"Update failed: {str(e)}")
+            print(f"Error getting diff: {e}")
+        
+        return diff_info
+    
+    def _load_repo_states(self) -> Dict:
+        """Load repository states from disk"""
+        if self.repo_states_file.exists():
+            try:
+                with open(self.repo_states_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+    
+    def _save_repo_state(self, repo_url: str, repo_path: Path, commit_hash: str):
+        """Save repository state"""
+        self.repo_states[repo_url] = {
+            'path': str(repo_path),
+            'commit': commit_hash,
+            'last_updated': datetime.now().isoformat()
+        }
+        
+        with open(self.repo_states_file, 'w') as f:
+            json.dump(self.repo_states, f, indent=2)
+    
+    def get_previous_test_file(self, repo_url: str) -> Optional[Path]:
+        """Get path to previous test file for this repository"""
+        repo_name = self._sanitize_repo_name(repo_url)
+        test_outputs_dir = Path("test_outputs")
+        
+        # Look for most recent test file for this repo
+        pattern = f"test_cases_{repo_name}_*.csv"
+        test_files = sorted(test_outputs_dir.glob(pattern), reverse=True)
+        
+        if test_files:
+            return test_files[0]
+        
+        return None
+    
+    # Keep all existing methods from original GitHandler
+    def clone_repository(
+        self,
+        repo_url: str,
+        branch: str = "main",
+        depth: int = 1
+    ) -> Path:
+        """
+        Clone a Git repository (legacy method for backwards compatibility)
+        
+        Args:
+            repo_url: URL of the Git repository
+            branch: Branch to clone
+            depth: Clone depth (1 for shallow clone)
+            
+        Returns:
+            Path to cloned repository
+        """
+        repo_path, _ = self.clone_or_pull_repository(repo_url, branch, depth)
+        return repo_path
     
     def get_code_files(self, repo_path: Path, max_files: int = 100) -> List[Path]:
         """
@@ -364,17 +424,13 @@ class GitHandler:
             return None
     
     def cleanup(self, repo_path: Path = None):
-        """
-        Clean up cloned repositories
-        
-        Args:
-            repo_path: Specific repo to clean, or None to keep all repos
-        """
+        """Clean up cloned repositories"""
         if repo_path and repo_path.exists():
-            if self._safe_rmtree(repo_path):
-                print(f"✅ Cleaned up repository: {repo_path}")
-            else:
-                print(f"⚠️  Could not clean up {repo_path} - you may need to delete it manually")
+            shutil.rmtree(repo_path)
+        elif self.repos_dir.exists():
+            # Don't remove the entire directory, just old repos
+            # Keep the repo_states.json file
+            pass
     
     def get_commit_info(self, repo_path: Path) -> dict:
         """Get latest commit information"""
@@ -384,8 +440,7 @@ class GitHandler:
                 ['git', 'rev-parse', 'HEAD'],
                 cwd=repo_path,
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             commit_hash = result.stdout.strip() if result.returncode == 0 else 'unknown'
             
@@ -394,8 +449,7 @@ class GitHandler:
                 ['git', 'log', '-1', '--pretty=%B'],
                 cwd=repo_path,
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             commit_message = result.stdout.strip() if result.returncode == 0 else 'unknown'
             
@@ -404,8 +458,7 @@ class GitHandler:
                 ['git', 'log', '-1', '--pretty=%an'],
                 cwd=repo_path,
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             author = result.stdout.strip() if result.returncode == 0 else 'unknown'
             
@@ -414,8 +467,7 @@ class GitHandler:
                 ['git', 'log', '-1', '--pretty=%ai'],
                 cwd=repo_path,
                 capture_output=True,
-                text=True,
-                timeout=10
+                text=True
             )
             date = result.stdout.strip() if result.returncode == 0 else 'unknown'
             
@@ -434,82 +486,3 @@ class GitHandler:
                 'author': 'unknown',
                 'date': 'unknown'
             }
-    
-    def check_for_changes(self, repo_path: Path, old_hash: str) -> dict:
-        """
-        Check what changed between old commit and current
-        
-        Args:
-            repo_path: Path to repository
-            old_hash: Previous commit hash
-            
-        Returns:
-            Dictionary with change information
-        """
-        try:
-            current_info = self.get_commit_info(repo_path)
-            
-            if current_info['full_hash'] == old_hash:
-                return {
-                    'has_changes': False,
-                    'files_changed': 0,
-                    'changed_files': []
-                }
-            
-            # Get list of changed files
-            result = subprocess.run(
-                ['git', 'diff', '--name-only', old_hash, 'HEAD'],
-                cwd=repo_path,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode == 0:
-                changed_files = [f for f in result.stdout.split('\n') if f.strip()]
-                return {
-                    'has_changes': True,
-                    'files_changed': len(changed_files),
-                    'changed_files': changed_files,
-                    'old_commit': old_hash[:7],
-                    'new_commit': current_info['hash']
-                }
-            
-            return {
-                'has_changes': True,
-                'files_changed': 0,
-                'changed_files': []
-            }
-            
-        except Exception as e:
-            return {
-                'has_changes': False,
-                'error': str(e)
-            }
-    
-    def force_clean_repo(self, repo_name: str) -> bool:
-        """
-        Force clean a specific repository (for manual cleanup)
-        
-        Args:
-            repo_name: Name of the repository folder
-            
-        Returns:
-            True if successful
-        """
-        repo_path = self.repos_dir / repo_name
-        
-        if not repo_path.exists():
-            print(f"Repository '{repo_name}' does not exist")
-            return True
-        
-        print(f"🗑️  Force cleaning repository: {repo_name}")
-        
-        if self._safe_rmtree(repo_path):
-            print(f"✅ Successfully removed {repo_name}")
-            return True
-        else:
-            print(f"❌ Failed to remove {repo_name}")
-            print(f"💡 Try closing any programs that might be using files in: {repo_path}")
-            print(f"   Then manually delete the folder or restart your computer")
-            return False
