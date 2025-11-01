@@ -1,4 +1,3 @@
-
 import streamlit as st
 import os
 import re
@@ -49,6 +48,8 @@ if "last_repo_info" not in st.session_state:
     st.session_state.last_repo_info = {}
 if "pending_git" not in st.session_state:
     st.session_state.pending_git = None
+if "current_repo_path" not in st.session_state:
+    st.session_state.current_repo_path = None
 
 # # ---- Helper: chat history -------------------------------------------------------
 # def save_chat_history():
@@ -84,6 +85,58 @@ def generate_chat_name(message: str) -> str:
     return name if name else "chat"
 
 
+def normalize_change_info(change_info):
+    """
+    Normalize change_info to ensure it's a proper dictionary.
+    Handles cases where git_handler returns a list or malformed data.
+    """
+    # If it's already a proper dict with expected keys, return as-is
+    if isinstance(change_info, dict) and "has_changes" in change_info:
+        return change_info
+    
+    # If it's a list (the bug case), convert to default dict
+    if isinstance(change_info, list):
+        logger.warning(f"⚠️ change_info is a list, converting to dict: {change_info}")
+        return {
+            "has_changes": True,
+            "is_new_repo": False,
+            "changed_files": change_info if change_info else [],
+            "commit_info": {}
+        }
+    
+    # If it's None or something else, return safe defaults
+    logger.warning(f"⚠️ Unexpected change_info type: {type(change_info)}, using defaults")
+    return {
+        "has_changes": True,
+        "is_new_repo": True,
+        "changed_files": [],
+        "commit_info": {}
+    }
+
+
+def clear_session_context():
+    """Clear all session context for a fresh start"""
+    logger.info("🧹 Clearing session context")
+    
+    # Clear basic session state
+    st.session_state.chat_history = []
+    st.session_state.uploaded_files = {}
+    st.session_state.previous_code = {}
+    st.session_state.generated_tests = {}
+    st.session_state.last_repo_info = {}
+    st.session_state.pending_git = None
+    st.session_state.current_repo_path = None
+    
+    # Clear RAG system documents
+    try:
+        if hasattr(st.session_state, "rag_system"):
+            st.session_state.rag_system.code_documents = {}  # ✅ Dict, not list
+            st.session_state.rag_system.test_cases = {}      # ✅ Dict, not list
+            logger.info("✅ RAG system cleared")
+    except Exception as e:
+        logger.warning(f"⚠️ Error clearing RAG system: {e}")
+    
+    logger.info("✅ Session context cleared")
 
 
 def has_context() -> bool:
@@ -377,6 +430,10 @@ def display_chat():
         m = git_pat.search(sanitized)
         if m:
             url = m.group(0).strip()
+            
+            # Clear previous session context for fresh start
+            clear_session_context()
+            
             st.session_state.pending_git = {"url": url, "stage": "ask_branch"}
             bot = (
                 f"Found repository: **{url}**\n"
@@ -451,40 +508,59 @@ def display_chat():
                                 if len(lst) > 10:
                                     st.info(f"... and {len(lst)-10} more (download CSV)")
 
+                    # ---- Auto-save chat after test generation ----
+                    auto_save_chat()
+                    st.caption("💾 Chat auto-saved")
+
             return
 
-        # ---- Normal LLM chat ----
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                ctx = st.session_state.rag_system.get_relevant_context(sanitized)
-                reply = st.session_state.llm_handler.generate_chat_response(
-                    sanitized, ctx, st.session_state.chat_history
-                )
-                st.markdown(reply)
+        # ---- Check for pending Git flow BEFORE normal chat ----
+        if st.session_state.pending_git:
+            pend = st.session_state.pending_git
+            if pend["stage"] == "ask_branch":
+                branch = sanitized.strip() or "main"
+                pend["branch"] = branch
+                pend["stage"] = "processing"
+
+                bot = f"Understood. The branch `{branch}` has been selected. Will clone and generate test cases."
                 st.session_state.chat_history.append(
-                    {"role": "assistant", "content": reply, "timestamp": datetime.now().isoformat()}
+                    {"role": "assistant", "content": bot, "timestamp": datetime.now().isoformat()}
                 )
+                with st.chat_message("assistant"):
+                    st.markdown(bot)
+                # Don't return here - let it continue to processing below
+        
+        # ---- Normal LLM chat ----
+        if not st.session_state.pending_git:
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    ctx = st.session_state.rag_system.get_relevant_context(sanitized)
+                    reply = st.session_state.llm_handler.generate_chat_response(
+                        sanitized, ctx, st.session_state.chat_history
+                    )
+                    st.markdown(reply)
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": reply, "timestamp": datetime.now().isoformat()}
+                    )
 
     # ---- Pending Git flow (branch → clone → generate) ----
     if st.session_state.pending_git and user_input:
         pend = st.session_state.pending_git
-        if pend["stage"] == "ask_branch":
-            branch = user_input.strip() or "main"
-            pend["branch"] = branch
-            pend["stage"] = "processing"
-
-            with st.chat_message("assistant"):
-                st.markdown(f"Cloning **{branch}** …")
+        if pend["stage"] == "processing":
 
             with st.spinner("Cloning & analysing repository…"):
                 try:
                     gh = GitHandler()
-                    repo_path, change_info = gh.clone_or_pull_repository(
-                        pend["url"], branch, depth=1
+                    repo_path, raw_change_info = gh.clone_or_pull_repository(
+                        pend["url"], pend["branch"], depth=1
                     )
+                    
+                    # ✅ CRITICAL FIX: Normalize change_info to handle list/dict issues
+                    change_info = normalize_change_info(raw_change_info)
+                    logger.info(f"✅ Normalized change_info: {change_info}")
 
                     # ---- No changes → reuse previous CSV ----
-                    if not change_info["has_changes"] and not change_info["is_new_repo"]:
+                    if not change_info.get("has_changes") and not change_info.get("is_new_repo"):
                         st.info("No new changes in the repository. No new test cases generated.")
                         prev_csv = gh.get_previous_test_file(pend["url"])
                         if prev_csv:
@@ -508,58 +584,168 @@ def display_chat():
                                         "No-Changes Report", data=f,
                                         file_name=report.name, mime="text/plain"
                                     )
+                            
+                            # ---- Auto-save chat ----
+                            auto_save_chat()
+                            st.caption("💾 Chat auto-saved")
+                            
                             st.session_state.pending_git = None
                             return
 
-                    # ---- Parse code (changed files or all) ----
+                    # ---- Smart change detection and processing ----
                     if change_info.get("has_changes"):
-                        code_files = gh.get_changed_code_files(
-                            repo_path, change_info.get("changed_files", [])
-                        )
-                        st.info(f"Processing **{len(code_files)}** changed files")
+                        changed_files = change_info.get("changed_files", [])
+                        
+                        # Categorize changes
+                        added_files = []
+                        modified_files = []
+                        deleted_files = []
+                        
+                        for change in changed_files:
+                            if isinstance(change, dict):
+                                # If git_handler provides detailed change info
+                                status = change.get("status", "M")
+                                filepath = change.get("file", "")
+                                if status == "A":
+                                    added_files.append(filepath)
+                                elif status == "D":
+                                    deleted_files.append(filepath)
+                                elif status in ["M", "R"]:
+                                    modified_files.append(filepath)
+                            else:
+                                # Fallback: assume all are modified
+                                modified_files.append(str(change))
+                        
+                        # Get actual file paths for new and modified files only
+                        files_to_process = added_files + modified_files
+                        
+                        if deleted_files:
+                            deleted_names = [Path(f).name for f in deleted_files]
+                            st.warning(f"🗑️ Detected **{len(deleted_files)}** deleted file(s): {', '.join(deleted_names)}")
+                        
+                        if files_to_process:
+                            code_files = gh.get_changed_code_files(repo_path, files_to_process)
+                            
+                            change_summary = []
+                            if added_files:
+                                change_summary.append(f"**{len(added_files)}** added")
+                            if modified_files:
+                                change_summary.append(f"**{len(modified_files)}** modified")
+                            
+                            st.info(f"📝 Processing {', '.join(change_summary)} file(s)")
+                        else:
+                            # Only deletions, no files to process
+                            code_files = []
+                            st.info("🗑️ Only deletions detected, no new tests to generate")
                     else:
+                        # First time or no changes
                         code_files = gh.get_code_files(repo_path)
+                        deleted_files = []
 
+                    # ---- Parse code (only new/modified files) ----
                     parser = CodeParser()
                     parsed = {}
-                    prog = st.progress(0)
-                    for i, fp in enumerate(code_files):
-                        try:
-                            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                                parsed[fp.name] = parser.parse_code(f.read(), fp.name)
-                        except Exception as e:
-                            logger.warning(f"Parse error {fp}: {e}")
-                        prog.progress((i + 1) / len(code_files))
-                    prog.empty()
+                    
+                    if code_files:
+                        prog = st.progress(0)
+                        for i, fp in enumerate(code_files):
+                            try:
+                                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                                    parsed[fp.name] = parser.parse_code(f.read(), fp.name)
+                            except Exception as e:
+                                logger.warning(f"Parse error {fp}: {e}")
+                            prog.progress((i + 1) / len(code_files))
+                        prog.empty()
 
-                    if not parsed:
-                        st.error("No code files could be parsed.")
-                        st.session_state.pending_git = None
-                        return
+                    # ---- Generate tests (only for parsed files) ----
+                    if parsed:
+                        st.session_state.rag_system.add_code_documents(parsed)
+                        
+                        gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
+                        tests = gen.generate_tests(parsed, test_types, module_level=True)
+                        st.session_state.generated_tests = tests
+                        st.session_state.rag_system.add_test_cases(tests, session_id="current")
 
-                    st.session_state.rag_system.add_code_documents(parsed)
+                        total = sum(len(v) for v in tests.values())
+                        st.success(f"✅ Generated **{total}** new test cases")
+                    else:
+                        tests = {}
+                        if not change_info.get("has_changes") or not deleted_files:
+                            st.error("No code files could be parsed.")
+                            st.session_state.pending_git = None
+                            return
 
-                    # ---- Generate tests ----
-                    gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
-                    tests = gen.generate_tests(parsed, test_types, module_level=True)
-                    st.session_state.generated_tests = tests
-                    st.session_state.rag_system.add_test_cases(tests, session_id="current")
-
-                    total = sum(len(v) for v in tests.values())
-                    st.success(f"Generated **{total}** test cases")
-
-                    # ---- CSV handling (append or new) ----
+                    # ---- Intelligent CSV handling ----
                     csv_h = CSVHandler()
                     prev_csv = gh.get_previous_test_file(pend["url"])
+                    
                     if prev_csv and change_info.get("has_changes"):
-                        csv_file = csv_h.append_to_previous_csv(prev_csv, tests, change_info)
-                        st.info("Appended new tests to previous suite")
+                        # Smart merge: append new tests and remove deleted file tests
+                        import csv as csv_module
+                        
+                        # Read previous CSV
+                        previous_tests = []
+                        with open(prev_csv, 'r', encoding='utf-8') as f:
+                            reader = csv_module.DictReader(f)
+                            previous_tests = list(reader)
+                        
+                        # Remove tests for deleted files
+                        if deleted_files:
+                            deleted_names = [Path(f).name for f in deleted_files]
+                            original_count = len(previous_tests)
+                            previous_tests = [
+                                test for test in previous_tests 
+                                if not any(deleted_name in test.get('File', '') for deleted_name in deleted_names)
+                            ]
+                            removed_count = original_count - len(previous_tests)
+                            if removed_count > 0:
+                                st.info(f"🗑️ Removed **{removed_count}** test cases for deleted files")
+                        
+                        # Convert previous_tests back to the format expected by CSVHandler
+                        # Group by test type
+                        previous_tests_dict = {}
+                        for test in previous_tests:
+                            test_type = test.get('Type', 'Unit Test')
+                            if test_type not in previous_tests_dict:
+                                previous_tests_dict[test_type] = []
+                            previous_tests_dict[test_type].append(test)
+                        
+                        # Merge with new tests
+                        merged_tests = previous_tests_dict.copy()
+                        for test_type, test_list in tests.items():
+                            if test_type in merged_tests:
+                                merged_tests[test_type].extend(test_list)
+                            else:
+                                merged_tests[test_type] = test_list
+                        
+                        # Generate updated CSV
+                        csv_file = csv_h.generate_csv_with_repo_name(
+                            merged_tests, 
+                            gh._sanitize_repo_name(pend["url"]), 
+                            change_info
+                        )
+                        
+                        # Show summary
+                        total_now = sum(len(v) for v in merged_tests.values())
+                        if tests:
+                            st.success(f"📊 Updated test suite: **{total_now}** total tests")
+                        else:
+                            st.success(f"📊 Cleaned test suite: **{total_now}** remaining tests")
                     else:
+                        # First time - generate new CSV
+                        if not tests:
+                            st.error("No tests generated and no previous CSV found.")
+                            st.session_state.pending_git = None
+                            return
+                            
                         csv_file = csv_h.generate_csv_with_repo_name(
                             tests, gh._sanitize_repo_name(pend["url"]), change_info
                         )
 
-                    report_file = csv_h.generate_professional_test_report(tests)
+                    
+                    # Use merged tests if available, otherwise use new tests
+                    tests_to_display = merged_tests if 'merged_tests' in locals() else tests
+                    report_file = csv_h.generate_professional_test_report(tests_to_display)
 
                     d1, d2 = st.columns(2)
                     with d1:
@@ -587,11 +773,20 @@ def display_chat():
                         if struct["languages"]:
                             st.write(", ".join(struct["languages"]))
 
-                    # ---- Show first 10 tests per type ----
+                    # ---- Show first 10 tests per type (from complete suite) ----
+                    display_tests = tests_to_display if 'tests_to_display' in locals() else tests
+                    
+                    # Show only new tests in preview if this was an update
+                    if tests and 'merged_tests' in locals() and len(tests) < len(display_tests):
+                        st.info(f"📋 Showing newly generated tests (download CSV for complete suite)")
+                        preview_tests = tests
+                    else:
+                        preview_tests = display_tests
+                    
                     for ttype in test_types:
-                        lst = tests.get(ttype, [])
+                        lst = preview_tests.get(ttype, [])
                         if lst:
-                            with st.expander(f"{ttype}s ({len(lst)})", expanded=False):
+                            with st.expander(f"{ttype}s ({len(lst)} new)" if preview_tests == tests and 'merged_tests' in locals() else f"{ttype}s ({len(lst)})", expanded=False):
                                 for i, t in enumerate(lst[:10], 1):
                                     if t.get("format") == "professional":
                                         display_professional_test(t, i)
@@ -600,12 +795,19 @@ def display_chat():
                                 if len(lst) > 10:
                                     st.info(f"... and {len(lst)-10} more (download CSV)")
 
+                    # ---- Auto-save chat after test generation ----
+                    auto_save_chat()
+                    st.caption("💾 Chat auto-saved")
+
                     st.session_state.pending_git = None
 
                 except Exception as e:
                     st.error(f"Git processing failed: {e}")
+                    logger.error(f"Git processing error details: {e}", exc_info=True)
                     with st.expander("Details"):
                         st.code(str(e))
+                        import traceback
+                        st.code(traceback.format_exc())
                     st.session_state.pending_git = None
 
 # ---- Main -----------------------------------------------------------------------

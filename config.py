@@ -15,8 +15,8 @@ class Config:
     APP_NAME = "AI Test Case Generator"
     APP_VERSION = "2.0.0"
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-    
-    # Gemini Configuration
+
+    # LLM Configuration
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
@@ -87,8 +87,8 @@ class Config:
         """Validate configuration settings"""
         errors = []
         
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY is not set in .env file")
+        if not cls.GEMINI_API_KEY:
+            errors.append("GEMINI_API_KEY is not set in .env file")
         
         try:
             cls.create_directories()
