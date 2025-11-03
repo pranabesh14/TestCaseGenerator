@@ -680,57 +680,92 @@ def display_chat():
                     prev_csv = gh.get_previous_test_file(pend["url"])
                     
                     if prev_csv and change_info.get("has_changes"):
-                        # Smart merge: append new tests and remove deleted file tests
                         import csv as csv_module
+                        import tempfile
                         
-                        # Read previous CSV
-                        previous_tests = []
-                        with open(prev_csv, 'r', encoding='utf-8') as f:
-                            reader = csv_module.DictReader(f)
-                            previous_tests = list(reader)
-                        
-                        # Remove tests for deleted files
+                        # Handle deletions: filter out deleted file tests from previous CSV
                         if deleted_files:
                             deleted_names = [Path(f).name for f in deleted_files]
-                            original_count = len(previous_tests)
-                            previous_tests = [
-                                test for test in previous_tests 
-                                if not any(deleted_name in test.get('File', '') for deleted_name in deleted_names)
+                            
+                            # Read previous CSV
+                            previous_rows = []
+                            with open(prev_csv, 'r', encoding='utf-8') as f:
+                                reader = csv_module.DictReader(f)
+                                fieldnames = reader.fieldnames
+                                previous_rows = list(reader)
+                            
+                            # Filter out tests for deleted files
+                            original_count = len(previous_rows)
+                            filtered_rows = [
+                                row for row in previous_rows 
+                                if not any(
+                                    deleted_name in row.get('File', '') or 
+                                    deleted_name in row.get('Source File', '') or
+                                    deleted_name in row.get('file', '')
+                                    for deleted_name in deleted_names
+                                )
                             ]
-                            removed_count = original_count - len(previous_tests)
+                            removed_count = original_count - len(filtered_rows)
                             if removed_count > 0:
                                 st.info(f"🗑️ Removed **{removed_count}** test cases for deleted files")
-                        
-                        # Convert previous_tests back to the format expected by CSVHandler
-                        # Group by test type
-                        previous_tests_dict = {}
-                        for test in previous_tests:
-                            test_type = test.get('Type', 'Unit Test')
-                            if test_type not in previous_tests_dict:
-                                previous_tests_dict[test_type] = []
-                            previous_tests_dict[test_type].append(test)
-                        
-                        # Merge with new tests
-                        merged_tests = previous_tests_dict.copy()
-                        for test_type, test_list in tests.items():
-                            if test_type in merged_tests:
-                                merged_tests[test_type].extend(test_list)
-                            else:
-                                merged_tests[test_type] = test_list
-                        
-                        # Generate updated CSV
-                        csv_file = csv_h.generate_csv_with_repo_name(
-                            merged_tests, 
-                            gh._sanitize_repo_name(pend["url"]), 
-                            change_info
-                        )
-                        
-                        # Show summary
-                        total_now = sum(len(v) for v in merged_tests.values())
-                        if tests:
-                            st.success(f"📊 Updated test suite: **{total_now}** total tests")
+                            
+                            # Write filtered CSV to temp file
+                            temp_csv = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', newline='', encoding='utf-8')
+                            writer = csv_module.DictWriter(temp_csv, fieldnames=fieldnames)
+                            writer.writeheader()
+                            writer.writerows(filtered_rows)
+                            temp_csv.close()
+                            prev_csv_to_use = Path(temp_csv.name)
                         else:
-                            st.success(f"📊 Cleaned test suite: **{total_now}** remaining tests")
+                            prev_csv_to_use = prev_csv
+                        
+                        # Append new tests using CSVHandler (preserves format correctly)
+                        if tests:
+                            try:
+                                csv_file = csv_h.append_to_previous_csv(prev_csv_to_use, tests, change_info)
+                            except AttributeError:
+                                # Fallback if append method doesn't exist
+                                logger.warning("append_to_previous_csv not found, using alternative approach")
+                                csv_file = csv_h.generate_csv_with_repo_name(
+                                    tests, 
+                                    gh._sanitize_repo_name(pend["url"]), 
+                                    change_info
+                                )
+                            
+                            total_new = sum(len(v) for v in tests.values())
+                            
+                            # Count total tests in final CSV
+                            with open(csv_file, 'r', encoding='utf-8') as f:
+                                total_tests = sum(1 for line in f) - 1  # -1 for header
+                            
+                            st.success(f"📊 Updated test suite: **{total_tests}** total tests ({total_new} new)")
+                        else:
+                            # Only deletions, no new tests
+                            if deleted_files:
+                                # Just copy the filtered CSV as final output
+                                csv_file = csv_h.generate_csv_with_repo_name(
+                                    {}, 
+                                    gh._sanitize_repo_name(pend["url"]), 
+                                    change_info
+                                )
+                                # Copy filtered CSV content to new file
+                                import shutil
+                                shutil.copy(prev_csv_to_use, csv_file)
+                                
+                                with open(csv_file, 'r', encoding='utf-8') as f:
+                                    total_tests = sum(1 for line in f) - 1
+                                st.success(f"📊 Cleaned test suite: **{total_tests}** remaining tests")
+                            else:
+                                st.error("No changes to process")
+                                st.session_state.pending_git = None
+                                return
+                        
+                        # Clean up temp file if created
+                        if deleted_files and prev_csv_to_use != prev_csv:
+                            try:
+                                prev_csv_to_use.unlink()
+                            except:
+                                pass
                     else:
                         # First time - generate new CSV
                         if not tests:
@@ -742,10 +777,8 @@ def display_chat():
                             tests, gh._sanitize_repo_name(pend["url"]), change_info
                         )
 
-                    
-                    # Use merged tests if available, otherwise use new tests
-                    tests_to_display = merged_tests if 'merged_tests' in locals() else tests
-                    report_file = csv_h.generate_professional_test_report(tests_to_display)
+                    tests_to_display = tests
+                    report_file = csv_h.generate_professional_test_report(tests)
 
                     d1, d2 = st.columns(2)
                     with d1:
@@ -773,27 +806,20 @@ def display_chat():
                         if struct["languages"]:
                             st.write(", ".join(struct["languages"]))
 
-                    # ---- Show first 10 tests per type (from complete suite) ----
-                    display_tests = tests_to_display if 'tests_to_display' in locals() else tests
-                    
-                    # Show only new tests in preview if this was an update
-                    if tests and 'merged_tests' in locals() and len(tests) < len(display_tests):
+                    # ---- Show first 10 tests per type (newly generated tests) ----
+                    if tests:
                         st.info(f"📋 Showing newly generated tests (download CSV for complete suite)")
-                        preview_tests = tests
-                    else:
-                        preview_tests = display_tests
-                    
-                    for ttype in test_types:
-                        lst = preview_tests.get(ttype, [])
-                        if lst:
-                            with st.expander(f"{ttype}s ({len(lst)} new)" if preview_tests == tests and 'merged_tests' in locals() else f"{ttype}s ({len(lst)})", expanded=False):
-                                for i, t in enumerate(lst[:10], 1):
-                                    if t.get("format") == "professional":
-                                        display_professional_test(t, i)
-                                    else:
-                                        display_code_test(t, i)
-                                if len(lst) > 10:
-                                    st.info(f"... and {len(lst)-10} more (download CSV)")
+                        for ttype in test_types:
+                            lst = tests.get(ttype, [])
+                            if lst:
+                                with st.expander(f"{ttype}s ({len(lst)} new)", expanded=False):
+                                    for i, t in enumerate(lst[:10], 1):
+                                        if t.get("format") == "professional":
+                                            display_professional_test(t, i)
+                                        else:
+                                            display_code_test(t, i)
+                                    if len(lst) > 10:
+                                        st.info(f"... and {len(lst)-10} more (download CSV)")
 
                     # ---- Auto-save chat after test generation ----
                     auto_save_chat()
