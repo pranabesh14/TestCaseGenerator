@@ -6,6 +6,9 @@ import subprocess
 import tempfile
 import json
 from datetime import datetime
+from logger import get_app_logger
+
+logger = get_app_logger("git_handler")
 
 class GitHandler:
     """Handle Git repository operations with diff detection and incremental testing"""
@@ -255,6 +258,106 @@ class GitHandler:
         
         return diff_info
     
+    def get_function_changes(self, repo_path, modified_files, parser):
+        """
+        Detect function-level changes in modified files.
+        
+        Args:
+            repo_path: Path to the git repository
+            modified_files: List of modified file paths (relative to repo root)
+            parser: CodeParser instance to parse code
+            
+        Returns:
+            dict: {
+                'added_functions': {filename: [function_names]},
+                'removed_functions': {filename: [function_names]},
+                'modified_functions': {filename: [function_names]}
+            }
+        """
+        result = {
+            'added_functions': {},
+            'removed_functions': {},
+            'modified_functions': {}
+        }
+        
+        for file_path in modified_files:
+            try:
+                # Get current version
+                current_file = Path(repo_path) / file_path
+                if not current_file.exists():
+                    continue
+                    
+                with open(current_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    current_code = f.read()
+                
+                # Parse current version to get functions
+                current_parsed = parser.parse_code(current_code, current_file.name)
+                current_functions = {}
+                for chunk in current_parsed.get('chunks', []):
+                    if chunk.get('type') == 'function':
+                        func_name = chunk.get('name', '')
+                        if func_name:
+                            current_functions[func_name] = chunk.get('code', '')
+                
+                # Try to get previous version from git
+                try:
+                    old_code = subprocess.check_output(
+                        ['git', 'show', f'HEAD~1:{file_path}'],
+                        cwd=repo_path,
+                        stderr=subprocess.DEVNULL,
+                        text=True,
+                        timeout=10
+                    )
+                    
+                    # Parse old version to get functions
+                    old_parsed = parser.parse_code(old_code, Path(file_path).name)
+                    old_functions = {}
+                    for chunk in old_parsed.get('chunks', []):
+                        if chunk.get('type') == 'function':
+                            func_name = chunk.get('name', '')
+                            if func_name:
+                                old_functions[func_name] = chunk.get('code', '')
+                    
+                    # Calculate changes
+                    old_func_names = set(old_functions.keys())
+                    current_func_names = set(current_functions.keys())
+                    
+                    # Added functions
+                    added = current_func_names - old_func_names
+                    if added:
+                        result['added_functions'][current_file.name] = list(added)
+                        logger.info(f"➕ Added functions in {current_file.name}: {added}")
+                    
+                    # Removed functions
+                    removed = old_func_names - current_func_names
+                    if removed:
+                        result['removed_functions'][current_file.name] = list(removed)
+                        logger.info(f"🗑️ Removed functions in {current_file.name}: {removed}")
+                    
+                    # Modified functions (exist in both but code changed)
+                    common = old_func_names & current_func_names
+                    modified = []
+                    for func_name in common:
+                        if old_functions[func_name] != current_functions[func_name]:
+                            modified.append(func_name)
+                    
+                    if modified:
+                        result['modified_functions'][current_file.name] = modified
+                        logger.info(f"✏️ Modified functions in {current_file.name}: {modified}")
+                        
+                except subprocess.CalledProcessError:
+                    # File is new (no previous version) - all functions are "added"
+                    if current_functions:
+                        result['added_functions'][current_file.name] = list(current_functions.keys())
+                        logger.info(f"➕ New file with functions: {current_file.name}")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"⚠️ Timeout getting old version of {file_path}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Error detecting function changes in {file_path}: {e}")
+        
+        return result
+    
     def _load_repo_states(self) -> Dict:
         """Load repository states from disk"""
         if self.repo_states_file.exists():
@@ -290,7 +393,6 @@ class GitHandler:
         
         return None
     
-    # Keep all existing methods from original GitHandler
     def clone_repository(
         self,
         repo_url: str,
