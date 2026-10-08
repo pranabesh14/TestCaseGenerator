@@ -150,6 +150,13 @@ class CSVHandler:
             'Expected Result',
             'Target Function/Class',
             'Source File',
+            'Direct Calls',
+            'Tiered Functions',
+            'Call Graph',
+            'Related Source Files',
+            'Context Complete',
+            'Context Warnings',
+            'Source Evidence',
             'Priority',
             'Status',
             'Created Date',
@@ -189,7 +196,7 @@ class CSVHandler:
                             'Target Function/Class': test.get('target', 'N/A'),
                             'Source File': test.get('file', 'N/A'),
                             'Priority': self._get_priority(test_type, test),
-                            'Status': 'Not Executed',
+                            'Status': test.get('review_status', 'Not Executed'),
                             'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             'Change Type': change_type
                         }
@@ -203,11 +210,12 @@ class CSVHandler:
                             'Target Function/Class': test.get('target', 'N/A'),
                             'Source File': test.get('file', 'N/A'),
                             'Priority': self._get_priority(test_type, test),
-                            'Status': 'Not Executed',
+                            'Status': test.get('review_status', 'Not Executed'),
                             'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             'Change Type': change_type
                         }
                     
+                    row.update(self._provenance_columns(test))
                     writer.writerow(row)
                     test_id_counter[test_type] += 1
         
@@ -228,6 +236,13 @@ class CSVHandler:
             'Description',
             'Target Function/Class',
             'Source File',
+            'Direct Calls',
+            'Tiered Functions',
+            'Call Graph',
+            'Related Source Files',
+            'Context Complete',
+            'Context Warnings',
+            'Source Evidence',
             'Test Code',
             'Priority',
             'Status',
@@ -265,11 +280,12 @@ class CSVHandler:
                         'Source File': test.get('file', 'N/A'),
                         'Test Code': self._format_code_for_csv(test.get('code', '')),
                         'Priority': self._get_priority(test_type, test),
-                        'Status': 'Not Executed',
+                        'Status': test.get('review_status', 'Not Executed'),
                         'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Change Type': change_type
                     }
                     
+                    row.update(self._provenance_columns(test))
                     writer.writerow(row)
                     test_id += 1
         
@@ -315,6 +331,13 @@ class CSVHandler:
             'Expected Result',
             'Target Function/Class',
             'Source File',
+            'Direct Calls',
+            'Tiered Functions',
+            'Call Graph',
+            'Related Source Files',
+            'Context Complete',
+            'Context Warnings',
+            'Source Evidence',
             'Priority',
             'Status',
             'Created Date'
@@ -341,7 +364,7 @@ class CSVHandler:
                             'Target Function/Class': test.get('target', 'N/A'),
                             'Source File': test.get('file', 'N/A'),
                             'Priority': self._get_priority(test_type, test),
-                            'Status': 'Not Executed',
+                            'Status': test.get('review_status', 'Not Executed'),
                             'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                     else:
@@ -354,13 +377,14 @@ class CSVHandler:
                             'Target Function/Class': test.get('target', 'N/A'),
                             'Source File': test.get('file', 'N/A'),
                             'Priority': self._get_priority(test_type, test),
-                            'Status': 'Not Executed',
+                            'Status': test.get('review_status', 'Not Executed'),
                             'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                     
                     if change_info:
                         row['Change Type'] = 'New'
                     
+                    row.update(self._provenance_columns(test))
                     writer.writerow(row)
                     test_id_counter[test_type] += 1
         
@@ -380,6 +404,13 @@ class CSVHandler:
             'Description',
             'Target Function/Class',
             'Source File',
+            'Direct Calls',
+            'Tiered Functions',
+            'Call Graph',
+            'Related Source Files',
+            'Context Complete',
+            'Context Warnings',
+            'Source Evidence',
             'Test Code',
             'Priority',
             'Status',
@@ -406,18 +437,32 @@ class CSVHandler:
                         'Source File': test.get('file', 'N/A'),
                         'Test Code': self._format_code_for_csv(test.get('code', '')),
                         'Priority': self._get_priority(test_type, test),
-                        'Status': 'Not Executed',
+                        'Status': test.get('review_status', 'Not Executed'),
                         'Created Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     
                     if change_info:
                         row['Change Type'] = 'New'
                     
+                    row.update(self._provenance_columns(test))
                     writer.writerow(row)
                     test_id += 1
         
         return csv_file
     
+    def _provenance_columns(self, test: Dict) -> Dict:
+        def encode(key):
+            return json.dumps(test.get(key, []), ensure_ascii=False)
+        return {
+            'Direct Calls': encode('direct_calls'),
+            'Tiered Functions': json.dumps(test.get('call_tiers', {}), ensure_ascii=False),
+            'Call Graph': encode('call_edges'),
+            'Related Source Files': encode('related_files'),
+            'Context Complete': test.get('context_complete', ''),
+            'Context Warnings': encode('context_warnings'),
+            'Source Evidence': encode('evidence'),
+        }
+
     def _code_to_steps(self, code: str) -> str:
         """Convert test code to test steps"""
         if not code or code == '# No code generated':

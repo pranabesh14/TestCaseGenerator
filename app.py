@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from llm_handler import LLMHandler
 from code_parser import CodeParser
+from config import config
 from test_generator import TestGenerator
 from git_handler import GitHandler
 from csv_handler import CSVHandler
@@ -514,7 +515,7 @@ def display_chat():
         uploaded_files = st.file_uploader(
             "Attach code files",
             accept_multiple_files=True,
-            type=["py", "js", "java", "cpp", "c", "cs", "go", "rb", "php", "swift", "kt", "ts", "rs"],
+            type=[extension.lstrip('.') for extension in config.SUPPORTED_EXTENSIONS],
             key="chat_uploader",
             label_visibility="collapsed",
         )
@@ -611,6 +612,9 @@ def display_chat():
 
                     gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
                     tests = gen.generate_tests(parsed, test_types, module_level=True)
+                    if gen.diagnostics:
+                        with st.expander("Functional analysis warnings", expanded=True):
+                            st.write("\n".join(dict.fromkeys(gen.diagnostics)))
                     st.session_state.generated_tests = tests
                     st.session_state.rag_system.add_test_cases(tests, session_id="current")
 
@@ -709,37 +713,8 @@ def display_chat():
                     change_info = normalize_change_info(raw_change_info)
                     logger.info(f"✅ Normalized change_info: {change_info}")
 
-                    # No changes handling
                     if not change_info.get("has_changes") and not change_info.get("is_new_repo"):
-                        st.info("No new changes in the repository. No new test cases generated.")
-                        prev_csv = gh.get_previous_test_file(pend["url"])
-                        if prev_csv:
-                            csv_h = CSVHandler()
-                            report = csv_h.generate_no_changes_report(
-                                prev_csv,
-                                gh._sanitize_repo_name(pend["url"]),
-                                gh.get_commit_info(repo_path),
-                            )
-                            st.success("No code changes – using previous test suite")
-                            d1, d2 = st.columns(2)
-                            with d1:
-                                with open(prev_csv, "rb") as f:
-                                    st.download_button(
-                                        "📥 Previous CSV", data=f,
-                                        file_name=prev_csv.name, mime="text/csv"
-                                    )
-                            with d2:
-                                with open(report, "rb") as f:
-                                    st.download_button(
-                                        "📥 No-Changes Report", data=f,
-                                        file_name=report.name, mime="text/plain"
-                                    )
-                            
-                            auto_save_chat()
-                            st.caption("💾 Chat auto-saved")
-                            
-                            st.session_state.pending_git = None
-                            return
+                        st.info("Repository unchanged; rebuilding the requested suite with current source analysis.")
 
                     # Smart change detection and processing
                     added_files = []
@@ -770,7 +745,6 @@ def display_chat():
                                 else:
                                     modified_files.append(str(change))
                         
-                        files_to_process = added_files + modified_files
                         
                         if deleted_files:
                             deleted_names = [Path(f).name for f in deleted_files]
@@ -784,22 +758,9 @@ def display_chat():
                             added_names = [Path(f).name for f in added_files]
                             st.success(f"➕ Detected **{len(added_files)}** new file(s): {', '.join(added_names)}")
                         
-                        if files_to_process:
-                            code_files = gh.get_changed_code_files(repo_path, files_to_process)
-                            
-                            change_summary = []
-                            if added_files:
-                                change_summary.append(f"**{len(added_files)}** added")
-                            if modified_files:
-                                change_summary.append(f"**{len(modified_files)}** modified")
-                            
-                            st.info(f"📝 Processing {', '.join(change_summary)} file(s)")
-                        else:
-                            code_files = []
-                            st.info("🗑️ Only deletions detected, no new tests to generate")
-                    else:
-                        # First time clone
-                        code_files = gh.get_code_files(repo_path)
+                    # Functional workflows depend on unchanged files as well.
+                    # Rebuild the suite after any change to avoid stale caller tests.
+                    code_files = gh.get_code_files(repo_path)
 
                     # Parse code
                     parser = CodeParser()
@@ -810,7 +771,8 @@ def display_chat():
                         for i, fp in enumerate(code_files):
                             try:
                                 with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                                    parsed[fp.name] = parser.parse_code(f.read(), fp.name)
+                                    relative_path = fp.relative_to(repo_path).as_posix()
+                                    parsed[relative_path] = parser.parse_code(f.read(), relative_path)
                             except Exception as e:
                                 logger.warning(f"Parse error {fp}: {e}")
                             prog.progress((i + 1) / len(code_files))
@@ -848,6 +810,9 @@ def display_chat():
                         
                         gen = TestGenerator(st.session_state.llm_handler, st.session_state.rag_system)
                         tests = gen.generate_tests(parsed, test_types, module_level=True)
+                        if gen.diagnostics:
+                            with st.expander("Functional analysis warnings", expanded=True):
+                                st.write("\n".join(dict.fromkeys(gen.diagnostics)))
                         st.session_state.generated_tests = tests
                         st.session_state.rag_system.add_test_cases(tests, session_id="current")
 
@@ -861,116 +826,20 @@ def display_chat():
                             st.session_state.pending_git = None
                             return
 
-                    # Intelligent CSV handling with file-level regeneration
+                    if not any(tests.values()):
+                        st.error("No source-backed tests could be generated. Check analysis warnings.")
+                        st.session_state.pending_git = None
+                        return
                     csv_h = CSVHandler()
-                    
                     repo_url = pend["url"]
-                    if repo_url in st.session_state.current_repo_csv:
-                        prev_csv = Path(st.session_state.current_repo_csv[repo_url])
-                        if not prev_csv.exists():
-                            prev_csv = gh.get_previous_test_file(repo_url)
-                        else:
-                            logger.info(f"✅ Using session CSV for {repo_url}")
-                    else:
-                        prev_csv = gh.get_previous_test_file(repo_url)
-                        if prev_csv:
-                            logger.info(f"📁 Using disk CSV for {repo_url}")
-                    
-                    if prev_csv and change_info.get("has_changes"):
-                        # ✅ INTELLIGENT REMOVAL: Remove tests for deleted files AND modified files (will regenerate)
-                        cleaned_csv, removed_count, removal_stats = remove_test_cases_from_csv(
-                            prev_csv, 
-                            deleted_files=deleted_files,
-                            removed_functions=None,  # Don't use function-level removal
-                            modified_files=modified_files  # Remove all tests for modified files
-                        )
-                        
-                        if removed_count > 0:
-                            st.success(f"🗑️ Removed **{removed_count}** obsolete test case(s)")
-                            if removal_stats['deleted_files'] > 0:
-                                st.info(f"   • {removal_stats['deleted_files']} tests for deleted files")
-                            if removal_stats['modified_files'] > 0:
-                                st.info(f"   • {removal_stats['modified_files']} tests for modified files (regenerating fresh)")
-                        
-                        if tests:
-                            try:
-                                csv_file = csv_h.append_to_previous_csv(cleaned_csv, tests, change_info)
-                            except AttributeError:
-                                logger.warning("append_to_previous_csv not found, using alternative approach")
-                                csv_file = csv_h.generate_csv_with_repo_name(
-                                    tests, 
-                                    gh._sanitize_repo_name(pend["url"]), 
-                                    change_info
-                                )
-                            
-                            # Count new tests from the tests dictionary
-                            unit_count = len(tests.get("Unit Test", []))
-                            functional_count = len(tests.get("Functional Test", []))
-                            total_new = unit_count + functional_count
-                            
-                            logger.info(f"🔍 New tests - Unit: {unit_count}, Functional: {functional_count}, Total: {total_new}")
-                            
-                            # Count total tests from the final CSV file (SOURCE OF TRUTH)
-                            with open(csv_file, 'r', encoding='utf-8') as f:
-                                total_tests = sum(1 for line in f) - 1  # -1 for header
-                            
-                            #logger.info(f"🔍 Final CSV has {total_tests} total tests")
-                            
-                            st.session_state.current_repo_csv[repo_url] = str(csv_file)
-                            
-                            # Display counts with better breakdown
-                            if removed_count > 0:
-                                st.success(f"✅ Regenerated test cases for modified/new code ({unit_count} Unit, {functional_count} Functional)")
-                            else:
-                                st.success(f"✅ Generated  new test cases ({unit_count} Unit, {functional_count} Functional)")
-                            #st.info(f"📊 Total test suite: **{total_tests}** tests")
-                        else:
-                            # Only deletions, no new tests
-                            csv_file = cleaned_csv
-                            
-                            with open(csv_file, 'r', encoding='utf-8') as f:
-                                total_tests = sum(1 for line in f) - 1
-                            
-                            st.session_state.current_repo_csv[repo_url] = str(csv_file)
-                            
-                            st.success(f"📊 Cleaned test suite: **{total_tests}** remaining tests")
-                        
-                        # Clean up temp file if different from original
-                        if cleaned_csv != prev_csv:
-                            try:
-                                # Don't delete if it's the final CSV file
-                                if cleaned_csv != csv_file:
-                                    cleaned_csv.unlink()
-                            except:
-                                pass
-                    else:
-                        # First time - generate new CSV
-                        if not tests:
-                            st.error("No tests generated and no previous CSV found.")
-                            st.session_state.pending_git = None
-                            return
-                            
-                        csv_file = csv_h.generate_csv_with_repo_name(
-                            tests, gh._sanitize_repo_name(repo_url), change_info
-                        )
-                        
-                        # Count new tests from the tests dictionary
-                        unit_count = len(tests.get("Unit Test", []))
-                        functional_count = len(tests.get("Functional Test", []))
-                        total_new = unit_count + functional_count
-                        
-                        logger.info(f"🔍 New tests - Unit: {unit_count}, Functional: {functional_count}, Total: {total_new}")
-                        
-                        # Count total tests from the final CSV file (SOURCE OF TRUTH)
-                        with open(csv_file, 'r', encoding='utf-8') as f:
-                            total_tests = sum(1 for line in f) - 1  # -1 for header
-                        
-                        logger.info(f"🔍 Final CSV has {total_tests} total tests")
-                        
-                        st.session_state.current_repo_csv[repo_url] = str(csv_file)
-                        
-                        # Display count from CSV (source of truth)
-                        st.success(f"✅ Generated **{total_tests}** test cases ({unit_count} Unit, {functional_count} Functional)")
+                    csv_file = csv_h.generate_csv_with_repo_name(
+                        tests, gh._sanitize_repo_name(repo_url), change_info
+                    )
+                    st.session_state.current_repo_csv[repo_url] = str(csv_file)
+                    unit_count = len(tests.get("Unit Test", []))
+                    functional_count = len(tests.get("Functional Test", []))
+                    total_tests = unit_count + functional_count
+                    st.success(f"Generated {total_tests} draft tests ({unit_count} Unit, {functional_count} Functional)")
 
                     report_file = csv_h.generate_professional_test_report(tests)
 

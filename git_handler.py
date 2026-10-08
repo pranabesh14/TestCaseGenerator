@@ -25,7 +25,7 @@ class GitHandler:
         self.code_extensions = {
             '.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c',
             '.cs', '.go', '.rb', '.php', '.swift', '.kt', '.rs', '.scala',
-            '.r', '.m', '.h', '.hpp'
+            '.r', '.m', '.h', '.hpp', '.hh', '.hxx', '.cc', '.cxx', '.h++', '.kts'
         }
     
     def clone_or_pull_repository(
@@ -413,13 +413,13 @@ class GitHandler:
         repo_path, _ = self.clone_or_pull_repository(repo_url, branch, depth)
         return repo_path
     
-    def get_code_files(self, repo_path: Path, max_files: int = 100) -> List[Path]:
+    def get_code_files(self, repo_path: Path, max_files: Optional[int] = None) -> List[Path]:
         """
         Get all code files from repository
         
         Args:
             repo_path: Path to repository
-            max_files: Maximum number of files to return
+            max_files: Optional explicit limit; exceeding it raises rather than truncating
             
         Returns:
             List of code file paths
@@ -435,19 +435,16 @@ class GitHandler:
         
         for root, dirs, files in os.walk(repo_path):
             # Filter out excluded directories
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            dirs[:] = sorted(d for d in dirs if d not in exclude_dirs)
             
-            for file in files:
+            for file in sorted(files):
                 file_path = Path(root) / file
                 
                 # Check if it's a code file
                 if file_path.suffix.lower() in self.code_extensions:
-                    # Skip very large files (> 1MB)
-                    if file_path.stat().st_size < 1_000_000:
-                        code_files.append(file_path)
-                        
-                        if len(code_files) >= max_files:
-                            return code_files
+                    code_files.append(file_path)
+                    if max_files is not None and len(code_files) > max_files:
+                        raise ValueError(f'Repository exceeds the explicit {max_files}-file limit')
         
         return code_files
     

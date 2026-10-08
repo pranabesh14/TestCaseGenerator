@@ -17,6 +17,9 @@ pathlib==1.0.1
 
 # Code parsing
 ast-comments==1.1.2
+tree-sitter==0.25.2
+tree-sitter-cpp==0.23.4
+tree-sitter-language-pack==0.9.0
 
 # Optional for enhanced features
 plotly==5.18.0

@@ -19,7 +19,7 @@ class Config:
     # LLM Configuration
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
-    LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+    LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "8000"))
     
     # File handling
@@ -27,7 +27,8 @@ class Config:
     MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "50"))
     SUPPORTED_EXTENSIONS = [
         '.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c',
-        '.cs', '.go', '.rb', '.php', '.swift', '.kt', '.rs', '.scala'
+        '.cs', '.go', '.rb', '.php', '.swift', '.kt', '.rs', '.scala',
+        '.h', '.hpp', '.hh', '.hxx', '.cc', '.cxx', '.h++', '.kts', '.r', '.m'
     ]
     
     # Git configuration
@@ -44,6 +45,8 @@ class Config:
     UNIT_TESTS_PER_FILE = int(os.getenv("UNIT_TESTS_PER_FILE", "5"))
     REGRESSION_TESTS_PER_CHANGE = int(os.getenv("REGRESSION_TESTS_PER_CHANGE", "3"))
     FUNCTIONAL_TESTS_PER_MODULE = int(os.getenv("FUNCTIONAL_TESTS_PER_MODULE", "5"))
+    FUNCTIONAL_CONTEXT_MAX_CHARS = int(os.getenv("FUNCTIONAL_CONTEXT_MAX_CHARS", "60000"))
+    FUNCTIONAL_CALL_MAX_DEPTH = int(os.getenv("FUNCTIONAL_CALL_MAX_DEPTH", "8"))
     
     # Security settings
     MAX_INPUT_LENGTH = int(os.getenv("MAX_INPUT_LENGTH", "10000"))

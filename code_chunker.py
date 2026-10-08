@@ -33,6 +33,13 @@ class CodeChunker:
         """
         language = parsed_data.get('language', 'unknown')
         logger.debug(f"Chunking {language} code ({len(code)} chars)")
+        if language in {'cpp', 'c'} or any('is_definition' in f for f in parsed_data.get('functions', [])):
+            return [{
+                'type': 'function', 'name': function['qualified_name'],
+                'code': function['code'], 'line_start': function['line'],
+                'line_end': function['end_line'], 'size': len(function['code']),
+            } for function in parsed_data.get('functions', [])
+                if function.get('is_definition')]
         
         if language == 'python':
             return self._chunk_python(code, parsed_data)
@@ -101,11 +108,10 @@ class CodeChunker:
                     chunks.append({
                         'type': 'function',
                         'name': func_name,
-                        'code': f"{imports}\n\n{func_code[:self.max_chunk_size]}",
+                        'code': f"{imports}\n\n{func_code}",
                         'line_start': line,
                         'line_end': end_line,
                         'size': len(func_code),
-                        'truncated': True,
                         'args': func.get('args', [])
                     })
             
@@ -234,7 +240,7 @@ class CodeChunker:
     def _find_class_end(self, tree, class_name: str, start_line: int) -> int:
         """Find the end line of a class"""
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
+            if isinstance(node, ast.ClassDef) and node.name == class_name and node.lineno == start_line:
                 if hasattr(node, 'end_lineno'):
                     return node.end_lineno
                 if node.body:
@@ -246,7 +252,7 @@ class CodeChunker:
     def _find_function_end(self, tree, func_name: str, start_line: int) -> int:
         """Find the end line of a function"""
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == func_name:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name and node.lineno == start_line:
                 if hasattr(node, 'end_lineno'):
                     return node.end_lineno
                 if node.body:

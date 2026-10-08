@@ -2,6 +2,8 @@ from typing import Dict, List
 from llm_handler import LLMHandler
 from rag_system import RAGSystem
 from code_chunker import CodeChunker
+from source_index import SourceIndex
+from config import config
 from logger import get_app_logger
 
 logger = get_app_logger("test_generator")
@@ -13,6 +15,7 @@ class TestGenerator:
         self.llm = llm_handler
         self.rag = rag_system
         self.chunker = CodeChunker(max_chunk_size=1500)
+        self.diagnostics = []
         logger.info("TestGenerator initialized (Unit & Functional tests only)")
     
     def generate_tests(
@@ -40,6 +43,7 @@ class TestGenerator:
             'Unit Test': [],
             'Functional Test': []
         }
+        self.diagnostics = []
         
         # Generate unit tests
         if 'Unit Test' in test_types:
@@ -117,100 +121,34 @@ class TestGenerator:
         return all_unit_tests
     
     def _generate_functional_tests_chunked(self, parsed_data: Dict, module_level: bool) -> List[Dict]:
-        """Generate functional tests using code chunking"""
-        logger.info("="*60)
-        logger.info("FUNCTIONAL TEST GENERATION")
-        logger.info("="*60)
-        logger.info(f"Module level: {module_level}")
-        
-        all_functional_tests = []
-        
-        if module_level:
-            logger.info("📦 Generating MODULE-LEVEL functional tests")
-            
-            # Combine all files and chunk
-            all_code = ""
-            combined_data = {
-                'language': 'unknown',
-                'functions': [],
-                'classes': [],
-                'code': ''
-            }
-            
-            for filename, data in parsed_data.items():
-                all_code += f"\n\n# File: {filename}\n{data['code']}"
-                combined_data['functions'].extend(data.get('functions', []))
-                combined_data['classes'].extend(data.get('classes', []))
-                if not combined_data['language'] or combined_data['language'] == 'unknown':
-                    combined_data['language'] = data.get('language', 'unknown')
-            
-            combined_data['code'] = all_code
-            
-            # Chunk the combined code
-            chunks = self.chunker.chunk_code(all_code, combined_data)
-            logger.info(f"Created {len(chunks)} module chunks")
-            
-            # Generate functional tests for each chunk
-            for i, chunk in enumerate(chunks, 1):
-                logger.info(f"  Module chunk {i}/{len(chunks)}: {chunk['name']}")
-                
-                try:
-                    chunk_tests = self.llm.generate_tests_for_chunk(
-                        chunk,
-                        "Functional Test",
-                        "module"
-                    )
-                    
-                    # Mark as module-level tests
-                    for test in chunk_tests:
-                        test['scope'] = 'module'
-                    
-                    logger.info(f"    ✅ Generated {len(chunk_tests)} tests")
-                    all_functional_tests.extend(chunk_tests)
-                    
-                except Exception as e:
-                    logger.error(f"    ❌ Error: {e}")
-                    continue
-        
-        else:
-            logger.info("📄 Generating FILE-LEVEL functional tests")
-            
-            # Process each file separately
-            for filename, data in parsed_data.items():
-                logger.info(f"\n📝 Processing file: {filename}")
-                
-                # Chunk the code
-                chunks = self.chunker.chunk_code(data['code'], data)
-                logger.info(f"Created {len(chunks)} chunks")
-                
-                # Generate functional tests for each chunk
-                for i, chunk in enumerate(chunks, 1):
-                    logger.info(f"  Chunk {i}/{len(chunks)}: {chunk['name']}")
-                    
-                    try:
-                        chunk_tests = self.llm.generate_tests_for_chunk(
-                            chunk,
-                            "Functional Test",
-                            filename
-                        )
-                        
-                        # Mark as file-level tests
-                        for test in chunk_tests:
-                            test['scope'] = 'file'
-                        
-                        logger.info(f"    ✅ Generated {len(chunk_tests)} tests")
-                        all_functional_tests.extend(chunk_tests)
-                        
-                    except Exception as e:
-                        logger.error(f"    ❌ Error: {e}")
-                        continue
-        
-        logger.info("="*60)
-        logger.info(f"📊 Total functional tests: {len(all_functional_tests)}")
-        logger.info("="*60)
-        
-        return all_functional_tests
-    
+        """Generate from complete definitions plus their transitive dependencies."""
+        index = SourceIndex(parsed_data)
+        self.diagnostics.extend(index.diagnostics)
+        tests = []
+        for symbol in index.symbols.values():
+            chunk, warnings = index.workflow(
+                symbol, config.FUNCTIONAL_CONTEXT_MAX_CHARS,
+                config.FUNCTIONAL_CALL_MAX_DEPTH,
+            )
+            self.diagnostics.extend(warnings)
+            if chunk is None:
+                continue
+            try:
+                generated = self.llm.generate_tests_for_chunk(
+                    chunk, "Functional Test", symbol['file']
+                )
+                for test in generated:
+                    test['scope'] = 'module' if module_level else 'file'
+                tests.extend(generated)
+                if not generated:
+                    self.diagnostics.append(f"No valid functional tests returned for {symbol['symbol_id']}")
+            except Exception as exc:
+                self.diagnostics.append(f"Generation failed for {symbol['symbol_id']}: {exc}")
+                logger.error("Functional generation failed", exc_info=True)
+        for message in dict.fromkeys(self.diagnostics):
+            logger.warning(message)
+        return tests
+
     def generate_test_summary(self, all_tests: Dict) -> Dict:
         """Generate summary statistics for generated tests"""
         summary = {

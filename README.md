@@ -1,4 +1,79 @@
-An intelligent test case generation system that automatically creates comprehensive test suites for your code using AI/LLM technology. Supports multiple programming languages and generates Unit Tests, Regression Tests, and Functional Tests in professional formats.
+An AI-assisted test case generator. Generated cases are drafts and need review.
+
+## Source-grounded functional generation
+
+Functional generation indexes definitions and static call relationships for
+**C, C++, Python, JavaScript/JSX, TypeScript/TSX, Java, C#, Go, Rust, Ruby,
+PHP, Swift, Kotlin/Kotlin scripts, Scala, R, and MATLAB**. Each language uses
+its syntax adapter; generation, source evidence checks and CSV export are shared.
+Upload validation and repository discovery include all their supported extensions.
+
+- Repository paths are preserved (for example `src/bcd.cpp`), including duplicate basenames.
+- C++ declarations in `abc.h` do not become implementation targets. Definitions
+  in `bcd.cpp` produce CSV rows pointing to `bcd.cpp`. Inline header definitions
+  correctly keep the header as their source.
+- Each functional request includes the whole entry definition and its resolved
+  transitive callees. Source is never silently cut at 1,500 characters.
+- CSV rows include `Direct Calls`, `Tiered Functions`, `Call Graph`,
+  `Related Source Files`, `Context Complete`, `Context Warnings`, and `Source Evidence`.
+  Tiers use minimum static call distance from the entry; the graph preserves
+  branching and cycles. Unresolved/dynamic call names remain in the tiers with
+  explicit labels; candidate definition locations are retained where available.
+  These are possible static calls, not execution traces.
+- Unknown/dynamic receivers, virtual dispatch, and ambiguous overloads remain
+  unresolved. This syntax index does not replace compiler type analysis or
+  `compile_commands.json`; macros, templates and build variants can require
+  compiler-backed indexing. Malformed C/C++ files are skipped. Other adapters
+  can retain intact definitions from partially parsed files, with warnings;
+  erroneous definitions are skipped and context is marked incomplete.
+- The generator validates target identity and citation locations, requires
+  evidence from the entry function, and labels accepted cases `Needs Review`.
+  It cannot prove that an expected result follows from a citation. API errors
+  and invalid JSON produce no dummy functional cases.
+- Repositories are no longer silently limited to 100 files. Each explicit
+  repository-generation request rebuilds the whole suite, including on unchanged
+  commits, so old cases or stale callers are not reused. This increases API work
+  and latency for large repositories; there is currently one request per definition.
+
+Configuration (character limits, not token counts):
+
+```env
+FUNCTIONAL_CONTEXT_MAX_CHARS=60000
+FUNCTIONAL_CALL_MAX_DEPTH=8
+LLM_TEMPERATURE=0.1
+```
+
+Oversized entry definitions are skipped with diagnostics. Dependency/file context
+that exceeds the budget or depth limit is reported as incomplete. Scenarios that
+depend on missing source must be omitted; review remains necessary.
+
+Install/update with Python 3.10 or newer:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install pytest
+python -m pytest -q
+streamlit run app.py
+```
+
+The regression checks use controlled LLM responses and source fixtures. They
+test parsing, graph resolution, validation, budgets and CSV provenance; they do
+not measure live-model accuracy. Actual functional requirements still need a
+specification or a human review; code describes implemented behavior.
+
+The multilingual adapters use the pinned `tree-sitter-language-pack==0.9.0`,
+which bundles grammar binaries. Supported syntax includes named methods/functions,
+JavaScript arrows, expression bodies and R function assignments. The graph
+handles lexical scopes, self/this calls, package/namespace references, explicit
+JS/TS imports and exports (including basic CommonJS), Go import aliases,
+simple Rust `use` paths, and simple Java/Kotlin/Scala/PHP/C# import directives.
+These are syntax adapters, not complete compiler or runtime analyzers. Complex
+re-exports, dynamic rebinding, reflection, dependency-injection targets, wildcard
+or build-specific import resolution, Swift modules, Rust macro expansion,
+Ruby/R runtime loading and MATLAB search-path rules can need more information.
+Unknown targets are recorded rather than guessed. Script/data-only files and
+callable forms that yield no named definitions receive a diagnostic.
+
 Features
 🎯 Core Capabilities
 

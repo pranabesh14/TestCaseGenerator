@@ -20,8 +20,8 @@ class CodeParser:
             'typescript': r'\.ts$',
             'tsx': r'\.tsx$',
             'java': r'\.java$',
-            'cpp': r'\.(cpp|cc|cxx|hpp|h\+\+)$',
-            'c': r'\.(c|h)$',
+            'cpp': r'\.(cpp|cc|cxx|h|hpp|hh|hxx|h\+\+)$',
+            'c': r'\.c$',
             'csharp': r'\.cs$',
             'go': r'\.go$',
             'rust': r'\.rs$',
@@ -99,6 +99,17 @@ class CodeParser:
                 parsed_data.update(self._parse_kotlin(code))
             else:
                 parsed_data.update(self._parse_generic(code))
+            if language in {'cpp', 'c'}:
+                from source_index import cpp_symbols
+                parsed_data['functions'] = cpp_symbols(code, filename)
+            elif language != 'python':
+                from language_adapters import EXTENSION_LANGUAGES, syntax_symbols
+                adapter_language = EXTENSION_LANGUAGES.get(Path(filename).suffix.lower())
+                if adapter_language:
+                    diagnostics = []
+                    parsed_data['functions'] = syntax_symbols(code, filename, adapter_language,
+                                                             {filename: {'code': code}}, diagnostics)
+                    parsed_data['index_warnings'] = diagnostics
         except Exception as e:
             logger.error(f"❌ Error parsing {filename}: {e}", exc_info=True)
             parsed_data['parse_error'] = str(e)
@@ -129,7 +140,7 @@ class CodeParser:
             
             for node in ast.walk(tree):
                 # Functions
-                if isinstance(node, ast.FunctionDef):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     result['functions'].append({
                         'name': node.name,
                         'line': node.lineno,
